@@ -1,0 +1,104 @@
+import { Request, Response, NextFunction } from "express";
+
+import { registerUser } from "../services/auth/register.service";
+import { verifyRegistrationOtp } from "../services/auth/verify.service";
+import { resendRegistrationOtp } from "../services/auth/resend.service";
+import { loginUser } from "../services/auth/login.service";
+
+
+export const register = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const registration = await registerUser(req.body);
+
+    return res.status(201).json({
+      success: true,
+      message: "Verification code sent",
+      data: registration,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const verifyOtp = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { registrationToken, otp } = req.body;
+
+    const user = await verifyRegistrationOtp(
+      registrationToken,
+      otp
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Registration successful",
+      data: user,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const resendOtp = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { registrationToken } = req.body;
+
+    const result = await resendRegistrationOtp(
+      registrationToken
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const login = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const result = await loginUser(req.body);
+
+    res.cookie("access_token", result.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+
+    res.cookie("refresh_token", result.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Login successful",
+      data: {
+        user: result.user,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
