@@ -32,6 +32,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   credential UserCredential?
+  cart       Cart?
 }
 
 model UserCredential {
@@ -136,6 +137,8 @@ model ProductVariant {
   price Decimal @db.Decimal(10, 2)
   stock Int     @default(0)
 
+  cartItems CartItem[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -168,4 +171,38 @@ model ProductImage {
   updatedAt DateTime @updatedAt
 
   @@index([productColorId])
+}
+
+model Cart {
+  id Int @id @default(autoincrement())
+
+  userId Int @unique
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  items CartItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CartItem {
+  id Int @id @default(autoincrement())
+
+  cartId Int
+
+  cart Cart @relation(fields: [cartId], references: [id], onDelete: Cascade)
+
+  productVariantId Int
+
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+
+  quantity Int @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cartId, productVariantId])
+  @@index([cartId])
+  @@index([productVariantId])
 }

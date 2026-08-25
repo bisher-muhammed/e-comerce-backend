@@ -30,3 +30,9 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+
+# AI / editor agent files
+.agents/
+.claude/
+.windsurf/

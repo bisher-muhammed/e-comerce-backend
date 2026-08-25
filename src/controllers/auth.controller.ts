@@ -4,6 +4,8 @@ import { registerUser } from "../services/auth/register.service";
 import { verifyRegistrationOtp } from "../services/auth/verify.service";
 import { resendRegistrationOtp } from "../services/auth/resend.service";
 import { loginUser } from "../services/auth/login.service";
+import prisma from "../config/prisma";
+import AppError from "../errors/AppError";
 
 
 export const register = async (
@@ -102,3 +104,42 @@ export const login = async (
   }
 };
 
+
+export const getMe = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user) {
+      throw new AppError("Unauthorized", 401);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id }, // was req.user.userId
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+      },
+    });
+
+    if (!user) {
+      throw new AppError("Unauthorized", 401);
+    }
+
+    if (user.status !== "ACTIVE") {
+      throw new AppError("Account is not active", 403);
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: { user },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
