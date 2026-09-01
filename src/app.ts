@@ -7,7 +7,9 @@ import colorRoutes from "./routes/color.routes";
 import sizeRoutes from "./routes/size.routes";
 import produtRoutes from "./routes/product.route";
 import customerProductRoutes from "./routes/customer/product.route";
-import cartRouters from "./routes/customer/cart.routes";
+import cartRouters from "./routes/customer/cart.route";
+import wishlistRouters from "./routes/customer/wishlist.route";
+import addressRouters from "./routes/customer/address.route";
 import cors from "cors";
 import errorMiddleware from "./middlewares/error.middleware";
 import cookieParser from "cookie-parser";
@@ -34,6 +36,11 @@ app.use("/api/v1/admin/sizes", sizeRoutes);
 app.use("/api/v1/admin/products",produtRoutes);
 app.use("/api/v1/customer/products",customerProductRoutes);
 app.use("/api/v1/customer/cart",cartRouters);
+app.use("/api/v1/customer/wishlist",wishlistRouters);
+app.use("/api/v1/customer/addresses",addressRouters);
+
+
+
 
 
 
