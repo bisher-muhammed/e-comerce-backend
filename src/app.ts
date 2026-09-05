@@ -10,6 +10,8 @@ import customerProductRoutes from "./routes/customer/product.route";
 import cartRouters from "./routes/customer/cart.route";
 import wishlistRouters from "./routes/customer/wishlist.route";
 import addressRouters from "./routes/customer/address.route";
+import checkoutRouters from "./routes/customer/checkout.route";
+import orderRouters from "./routes/customer/order.route";
 import cors from "cors";
 import errorMiddleware from "./middlewares/error.middleware";
 import cookieParser from "cookie-parser";
@@ -38,6 +40,9 @@ app.use("/api/v1/customer/products",customerProductRoutes);
 app.use("/api/v1/customer/cart",cartRouters);
 app.use("/api/v1/customer/wishlist",wishlistRouters);
 app.use("/api/v1/customer/addresses",addressRouters);
+app.use("/api/v1/customer/checkout",checkoutRouters);
+app.use("/api/v1/customer/orders",orderRouters);
+
 
 
 

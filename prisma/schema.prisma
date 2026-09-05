@@ -1,6 +1,7 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
 }
 
 datasource db {
@@ -35,6 +36,7 @@ model User {
   cart       Cart?
   wishlist   Wishlist?
   addresses  Address[]
+  orders     Order[]
 }
 
 model UserCredential {
@@ -141,6 +143,7 @@ model ProductVariant {
   stock Int     @default(0)
 
   cartItems CartItem[]
+  orderItems OrderItem[] 
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -268,8 +271,124 @@ model Address {
   @@index([userId])
 }
 
+
+model Order {
+  id Int @id @default(autoincrement())
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  status        OrderStatus   @default(PENDING)
+  paymentMethod PaymentMethod
+  paymentStatus PaymentStatus @default(PENDING)
+
+  razorpayOrderId   String? @unique
+  razorpayPaymentId String? @unique
+  razorpaySignature String?
+
+  contactEmail String
+  contactPhone String
+
+  shippingFirstName  String
+  shippingLastName   String?
+  shippingPhone      String
+  shippingLine1      String
+  shippingLine2      String?
+  shippingCity       String
+  shippingState      String
+  shippingPostalCode String
+  shippingCountry    String
+
+  subtotal Decimal @db.Decimal(10, 2)
+  total    Decimal @db.Decimal(10, 2)
+  idempotencyKey String @unique
+
+  expiresAt DateTime?
+
+  items OrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status, paymentStatus, expiresAt])
+}
+
+model OrderItem {
+  id Int @id @default(autoincrement())
+
+  orderId Int
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productVariantId Int
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+
+  productName String
+  colorName   String
+  sizeName    String
+  price       Decimal @db.Decimal(10, 2)
+
+  quantity          Int // immutable — original quantity ordered, for records
+  remainingQuantity Int // mutable — quantity minus cancelled minus returned
+  cancelledQuantity Int @default(0)
+  returnedQuantity  Int @default(0)
+
+  actions OrderItemAction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+}
+
+enum OrderItemActionType {
+  CANCEL
+  RETURN
+}
+
+model OrderItemAction {
+  id Int @id @default(autoincrement())
+
+  orderItemId Int
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  type     OrderItemActionType
+  quantity Int
+  reason   String?
+
+  idempotencyKey String
+
+  createdAt DateTime @default(now())
+
+  @@unique([orderItemId, idempotencyKey])
+  @@index([orderItemId])
+}
+
 enum AddressLabel {
   HOME
   OFFICE
   OTHER
 }
+
+enum PaymentMethod {
+  COD
+  ONLINE
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  DELIVERED
+}
+
+
+
+
+
