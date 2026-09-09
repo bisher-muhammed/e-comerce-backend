@@ -16,7 +16,8 @@ import {
   verifyOtp,
   resendOtp,
   login,
-  getMe
+  getMe,
+  refreshToken
 
 } from "../controllers/auth.controller";
 
@@ -47,5 +48,12 @@ router.post("/login",
   validate({ body: loginSchema }),
   login
 )
+
+
+router.post(
+  "/refresh-token",
+  refreshToken
+);
+
 
 export default router;

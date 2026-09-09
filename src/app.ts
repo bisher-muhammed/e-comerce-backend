@@ -12,6 +12,8 @@ import wishlistRouters from "./routes/customer/wishlist.route";
 import addressRouters from "./routes/customer/address.route";
 import checkoutRouters from "./routes/customer/checkout.route";
 import orderRouters from "./routes/customer/order.route";
+import customerRouters from "./routes/admin/customer.route";
+import ordersRouters from "./routes/admin/order.route";
 import cors from "cors";
 import errorMiddleware from "./middlewares/error.middleware";
 import cookieParser from "cookie-parser";
@@ -42,6 +44,10 @@ app.use("/api/v1/customer/wishlist",wishlistRouters);
 app.use("/api/v1/customer/addresses",addressRouters);
 app.use("/api/v1/customer/checkout",checkoutRouters);
 app.use("/api/v1/customer/orders",orderRouters);
+app.use("/api/v1/admin/customers", customerRouters);
+app.use("/api/v1/admin/orders",ordersRouters)
+
+
 
 
 

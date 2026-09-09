@@ -285,6 +285,7 @@ model Order {
   razorpayOrderId   String? @unique
   razorpayPaymentId String? @unique
   razorpaySignature String?
+  cancellationReason String?
 
   contactEmail String
   contactPhone String
@@ -301,6 +302,13 @@ model Order {
 
   subtotal Decimal @db.Decimal(10, 2)
   total    Decimal @db.Decimal(10, 2)
+
+
+  cancelledAmount Decimal @default(0) @db.Decimal(10, 2)
+
+
+  refundedAmount Decimal @default(0) @db.Decimal(10, 2)
+
   idempotencyKey String @unique
 
   expiresAt DateTime?
@@ -313,6 +321,8 @@ model Order {
   @@index([userId])
   @@index([status, paymentStatus, expiresAt])
 }
+
+
 
 model OrderItem {
   id Int @id @default(autoincrement())

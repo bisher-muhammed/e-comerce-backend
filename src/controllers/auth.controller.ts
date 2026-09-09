@@ -4,6 +4,7 @@ import { registerUser } from "../services/auth/register.service";
 import { verifyRegistrationOtp } from "../services/auth/verify.service";
 import { resendRegistrationOtp } from "../services/auth/resend.service";
 import { loginUser } from "../services/auth/login.service";
+import { refreshAccessToken } from "../services/auth/refresh.service";
 import prisma from "../config/prisma";
 import AppError from "../errors/AppError";
 
@@ -138,6 +139,37 @@ export const getMe = async (
     return res.status(200).json({
       success: true,
       data: { user },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+export const refreshToken = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const refreshToken = req.cookies.refresh_token;
+
+    if (!refreshToken) {
+      throw new AppError("Refresh token missing", 401);
+    }
+
+    const accessToken = await refreshAccessToken(refreshToken);
+
+    res.cookie("access_token", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 15 * 60 * 1000,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Access token refreshed",
     });
   } catch (error) {
     next(error);

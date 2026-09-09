@@ -12,7 +12,7 @@ export const generateAccessToken = (
   payload: AccessTokenPayload
 ) => {
   return jwt.sign(payload, JWT_ACCESS_SECRET, {
-    expiresIn: "55m",
+    expiresIn: "15m",
   });
 };
 
@@ -20,7 +20,7 @@ export const generateRefreshToken = (
   payload: AccessTokenPayload
 ) => {
   return jwt.sign(payload, JWT_REFRESH_SECRET, {
-    expiresIn: "7d",
+    expiresIn: "55m",
   });
 };
 
@@ -30,5 +30,14 @@ export const verifyAccessToken = (
   return jwt.verify(
     token,
     JWT_ACCESS_SECRET
+  ) as AccessTokenPayload;
+};
+
+export const verifyRefreshToken = (
+  token: string
+): AccessTokenPayload => {
+  return jwt.verify(
+    token,
+    JWT_REFRESH_SECRET
   ) as AccessTokenPayload;
 };

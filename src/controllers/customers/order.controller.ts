@@ -54,9 +54,9 @@ export async function cancelOrderController(req: Request, res: Response, next: N
     try {
         const userId = req.user!.id;
         const { orderId } = orderIdSchema.parse(req.params);
-        const { idempotencyKey } = cancelOrderSchema.parse(req.body);
+        const { idempotencyKey, reason } = cancelOrderSchema.parse(req.body);
 
-        const order = await cancelOrder(orderId, userId, idempotencyKey);
+        const order = await cancelOrder(orderId, userId, idempotencyKey, reason);
 
         res.status(200).json({ success: true, message: "Order cancelled successfully", data: order });
     } catch (error) {
@@ -69,9 +69,9 @@ export async function cancelOrderItemController(req: Request, res: Response, nex
     try {
         const userId = req.user!.id;
         const { orderId, itemId } = orderItemParamsSchema.parse(req.params);
-        const { quantity, idempotencyKey } = cancelOrderItemSchema.parse(req.body);
+        const { quantity, idempotencyKey, reason } = cancelOrderItemSchema.parse(req.body);
 
-        const item = await cancelOrderItem(orderId, itemId, userId, quantity, idempotencyKey);
+        const item = await cancelOrderItem(orderId, itemId, userId, quantity, idempotencyKey, reason);
 
         res.status(200).json({ success: true, message: "Item cancelled successfully", data: item });
     } catch (error) {
