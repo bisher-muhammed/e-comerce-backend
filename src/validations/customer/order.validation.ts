@@ -17,7 +17,10 @@ const idempotencyBodySchema = z.object({
 // ============================================================
 
 export const orderIdSchema = z.object({
-    orderId: z.coerce.number().int().positive(),
+    orderId: z.coerce
+        .number()
+        .int()
+        .positive(),
 });
 
 // ============================================================
@@ -25,8 +28,15 @@ export const orderIdSchema = z.object({
 // ============================================================
 
 export const orderItemParamsSchema = z.object({
-    orderId: z.coerce.number().int().positive(),
-    itemId: z.coerce.number().int().positive(),
+    orderId: z.coerce
+        .number()
+        .int()
+        .positive(),
+
+    itemId: z.coerce
+        .number()
+        .int()
+        .positive(),
 });
 
 // ============================================================
@@ -57,7 +67,6 @@ export const listOrdersSchema = z
             ])
             .optional(),
 
-        // Matches numeric order ID or product name
         search: z
             .string()
             .trim()
@@ -88,49 +97,53 @@ export const listOrdersSchema = z
 // CANCEL ENTIRE ORDER
 // ============================================================
 
-export const cancelOrderSchema = idempotencyBodySchema.extend({
-    reason: z
-        .string()
-        .trim()
-        .max(500)
-        .optional(),
-});
+export const cancelOrderSchema =
+    idempotencyBodySchema.extend({
+        reason: z
+            .string()
+            .trim()
+            .max(500)
+            .optional(),
+    });
 
 // ============================================================
 // CANCEL ORDER ITEM
 // ============================================================
 
-export const cancelOrderItemSchema = idempotencyBodySchema.extend({
-    quantity: z
-        .coerce
-        .number()
-        .int()
-        .positive(),
+export const cancelOrderItemSchema =
+    idempotencyBodySchema.extend({
+        quantity: z.coerce
+            .number()
+            .int()
+            .positive(),
 
-    reason: z
-        .string()
-        .trim()
-        .max(500)
-        .optional(),
-});
+        reason: z
+            .string()
+            .trim()
+            .max(500)
+            .optional(),
+    });
 
 // ============================================================
 // RETURN ORDER ITEM
 // ============================================================
 
-export const returnOrderItemSchema = idempotencyBodySchema.extend({
-    quantity: z
-        .coerce
-        .number()
-        .int()
-        .positive(),
+export const returnOrderItemSchema =
+    idempotencyBodySchema.extend({
+        quantity: z.coerce
+            .number()
+            .int()
+            .positive(),
 
-    reason: z
-        .string()
-        .trim()
-        .min(5, "Return reason must be at least 5 characters")
-        .max(500),
-});
+        reason: z
+            .string()
+            .trim()
+            .min(
+                5,
+                "Return reason must be at least 5 characters"
+            )
+            .max(500),
+    });
 
 // ============================================================
 // VERIFY ONLINE PAYMENT
@@ -145,10 +158,16 @@ export const verifyPaymentSchema = z.object({
     razorpayPaymentId: z
         .string()
         .trim()
-        .min(1, "Razorpay payment ID is required"),
+        .min(
+            1,
+            "Razorpay payment ID is required"
+        ),
 
     razorpaySignature: z
         .string()
         .trim()
-        .min(1, "Razorpay signature is required"),
+        .min(
+            1,
+            "Razorpay signature is required"
+        ),
 });

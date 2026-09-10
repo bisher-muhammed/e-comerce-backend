@@ -1,404 +1,442 @@
 generator client {
-  provider     = "prisma-client"
-  output       = "../generated/prisma"
-  moduleFormat = "cjs"
+provider = "prisma-client"
+output = "../generated/prisma"
+moduleFormat = "cjs"
 }
 
 datasource db {
-  provider = "postgresql"
+provider = "postgresql"
 }
 
 enum UserRole {
-  CUSTOMER
-  ADMIN
-  SUPER_ADMIN
+CUSTOMER
+ADMIN
+SUPER_ADMIN
 }
 
 enum UserStatus {
-  PENDING_VERIFICATION
-  ACTIVE
-  SUSPENDED
-  DEACTIVATED
+PENDING_VERIFICATION
+ACTIVE
+SUSPENDED
+DEACTIVATED
 }
 
 model User {
-  id        Int        @id @default(autoincrement())
-  email     String     @unique
-  firstName String
-  lastName  String?
-  role      UserRole   @default(CUSTOMER)
-  status    UserStatus @default(PENDING_VERIFICATION)
+id Int @id @default(autoincrement())
+email String @unique
+firstName String
+lastName String?
+role UserRole @default(CUSTOMER)
+status UserStatus @default(PENDING_VERIFICATION)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 
-  credential UserCredential?
-  cart       Cart?
-  wishlist   Wishlist?
-  addresses  Address[]
-  orders     Order[]
+credential UserCredential?
+cart Cart?
+wishlist Wishlist?
+addresses Address[]
+orders Order[]
+couponClaims CouponClaim[]
 }
 
 model UserCredential {
-  userId       Int    @id
-  passwordHash String
+userId Int @id
+passwordHash String
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Category {
-  id          Int     @id @default(autoincrement())
-  name        String  @unique
-  slug        String  @unique
-  description String?
-  isActive    Boolean @default(true)
+id Int @id @default(autoincrement())
+name String @unique
+slug String @unique
+description String?
+isActive Boolean @default(true)
 
-  products Product[]
+products Product[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 }
 
 model Product {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  name        String  @unique
-  slug        String  @unique
-  description String?
-  details     String?
+name String @unique
+slug String @unique
+description String?
+details String?
 
-  categoryId Int
-  category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+categoryId Int
+category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
-  isActive Boolean @default(true)
+isActive Boolean @default(true)
 
-  colors        ProductColor[]
-  wishlistItems WishlistItem[]
+colors ProductColor[]
+wishlistItems WishlistItem[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 
-  @@index([categoryId])
-  @@index([isActive])
+@@index([categoryId])
+@@index([isActive])
 }
 
 model Color {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  name    String  @unique
-  slug    String  @unique
-  hexCode String?
+name String @unique
+slug String @unique
+hexCode String?
 
-  products ProductColor[]
+products ProductColor[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 }
 
 model Size {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  name      String @unique
-  sortOrder Int    @unique
+name String @unique
+sortOrder Int @unique
 
-  variants ProductVariant[]
+variants ProductVariant[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 }
 
 model ProductColor {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  productId Int
-  colorId   Int
+productId Int
+colorId Int
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  color   Color   @relation(fields: [colorId], references: [id], onDelete: Restrict)
+product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+color Color @relation(fields: [colorId], references: [id], onDelete: Restrict)
 
-  images   ProductImage[]
-  variants ProductVariant[]
+images ProductImage[]
+variants ProductVariant[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 
-  @@unique([productId, colorId])
-  @@index([productId])
-  @@index([colorId])
+@@unique([productId, colorId])
+@@index([productId])
+@@index([colorId])
 }
 
 model ProductVariant {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  productColorId Int
-  sizeId         Int
+productColorId Int
+sizeId Int
 
-  productColor ProductColor @relation(fields: [productColorId], references: [id], onDelete: Cascade)
-  size         Size         @relation(fields: [sizeId], references: [id], onDelete: Restrict)
+productColor ProductColor @relation(fields: [productColorId], references: [id], onDelete: Cascade)
+size Size @relation(fields: [sizeId], references: [id], onDelete: Restrict)
 
-  price Decimal @db.Decimal(10, 2)
-  stock Int     @default(0)
+price Decimal @db.Decimal(10, 2)
+stock Int @default(0)
 
-  cartItems CartItem[]
-  orderItems OrderItem[] 
+cartItems CartItem[]
+orderItems OrderItem[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 
-  @@unique([productColorId, sizeId])
-  @@index([productColorId])
-  @@index([sizeId])
+@@unique([productColorId, sizeId])
+@@index([productColorId])
+@@index([sizeId])
 }
 
 model ProductImage {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  productColorId Int
+productColorId Int
+publicId String
+url String
 
-  /**
-   * Cloudinary information.
-   * url      -> URL used by the frontend
-   * publicId -> used internally by the backend
-   */
-  publicId String
-  url      String
+altText String?
 
-  altText String?
+sortOrder Int @default(0)
+isPrimary Boolean @default(false)
 
-  sortOrder Int     @default(0)
-  isPrimary Boolean @default(false)
+productColor ProductColor @relation(fields: [productColorId], references: [id], onDelete: Cascade)
 
-  productColor ProductColor @relation(fields: [productColorId], references: [id], onDelete: Cascade)
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([productColorId])
+@@index([productColorId])
 }
 
 model Cart {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  userId Int @unique
+userId Int @unique
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  items CartItem[]
+items CartItem[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 }
 
 model CartItem {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  cartId Int
+cartId Int
 
-  cart Cart @relation(fields: [cartId], references: [id], onDelete: Cascade)
+cart Cart @relation(fields: [cartId], references: [id], onDelete: Cascade)
 
-  productVariantId Int
+productVariantId Int
 
-  productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
 
-  quantity Int @default(1)
+quantity Int @default(1)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 
-  @@unique([cartId, productVariantId])
-  @@index([cartId])
-  @@index([productVariantId])
+@@unique([cartId, productVariantId])
+@@index([cartId])
+@@index([productVariantId])
 }
 
 model Wishlist {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  userId Int @unique
+userId Int @unique
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  items WishlistItem[]
+items WishlistItem[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 }
 
 model WishlistItem {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  wishlistId Int
-  productId  Int
+wishlistId Int
+productId Int
 
-  wishlist Wishlist @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
-  product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+wishlist Wishlist @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
+product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 
-  @@unique([wishlistId, productId])
-  @@index([wishlistId])
-  @@index([productId])
+@@unique([wishlistId, productId])
+@@index([wishlistId])
+@@index([productId])
 }
 
 model Address {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  userId Int
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+userId Int
+user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  label AddressLabel @default(HOME)
+label AddressLabel @default(HOME)
 
-  firstName String
-  lastName  String?
-  phone     String
+firstName String
+lastName String?
+phone String
 
-  addressLine1 String
-  addressLine2 String?
+addressLine1 String
+addressLine2 String?
 
-  city       String
-  state      String
-  postalCode String
-  country    String @default("India")
+city String
+state String
+postalCode String
+country String @default("India")
 
-  isDefault Boolean @default(false)
+isDefault Boolean @default(false)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 
-  @@index([userId])
+@@index([userId])
 }
-
 
 model Order {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  userId Int
-  user   User @relation(fields: [userId], references: [id], onDelete: Restrict)
+userId Int
+user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  status        OrderStatus   @default(PENDING)
-  paymentMethod PaymentMethod
-  paymentStatus PaymentStatus @default(PENDING)
+status OrderStatus @default(PENDING)
+paymentMethod PaymentMethod
+paymentStatus PaymentStatus @default(PENDING)
 
-  razorpayOrderId   String? @unique
-  razorpayPaymentId String? @unique
-  razorpaySignature String?
-  cancellationReason String?
+razorpayOrderId String? @unique
+razorpayPaymentId String? @unique
+razorpaySignature String?
+cancellationReason String?
 
-  contactEmail String
-  contactPhone String
+contactEmail String
+contactPhone String
 
-  shippingFirstName  String
-  shippingLastName   String?
-  shippingPhone      String
-  shippingLine1      String
-  shippingLine2      String?
-  shippingCity       String
-  shippingState      String
-  shippingPostalCode String
-  shippingCountry    String
+shippingFirstName String
+shippingLastName String?
+shippingPhone String
+shippingLine1 String
+shippingLine2 String?
+shippingCity String
+shippingState String
+shippingPostalCode String
+shippingCountry String
 
-  subtotal Decimal @db.Decimal(10, 2)
-  total    Decimal @db.Decimal(10, 2)
+subtotal Decimal @db.Decimal(10, 2)
+total Decimal @db.Decimal(10, 2)
 
+cancelledAmount Decimal @default(0) @db.Decimal(10, 2)
+refundedAmount Decimal @default(0) @db.Decimal(10, 2)
 
-  cancelledAmount Decimal @default(0) @db.Decimal(10, 2)
+couponCode String?
+couponDiscount Decimal? @db.Decimal(10, 2)
 
+idempotencyKey String @unique
 
-  refundedAmount Decimal @default(0) @db.Decimal(10, 2)
+expiresAt DateTime?
 
-  idempotencyKey String @unique
+items OrderItem[]
+couponClaim CouponClaim?
 
-  expiresAt DateTime?
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 
-  items OrderItem[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId])
-  @@index([status, paymentStatus, expiresAt])
+@@index([userId])
+@@index([status, paymentStatus, expiresAt])
 }
-
-
 
 model OrderItem {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  orderId Int
-  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+orderId Int
+order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
-  productVariantId Int
-  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+productVariantId Int
+productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
 
-  productName String
-  colorName   String
-  sizeName    String
-  price       Decimal @db.Decimal(10, 2)
+productName String
+colorName String
+sizeName String
+price Decimal @db.Decimal(10, 2)
 
-  quantity          Int // immutable — original quantity ordered, for records
-  remainingQuantity Int // mutable — quantity minus cancelled minus returned
-  cancelledQuantity Int @default(0)
-  returnedQuantity  Int @default(0)
+quantity Int
+remainingQuantity Int
+cancelledQuantity Int @default(0)
+returnedQuantity Int @default(0)
 
-  actions OrderItemAction[]
+actions OrderItemAction[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
 
-  @@index([orderId])
-}
-
-enum OrderItemActionType {
-  CANCEL
-  RETURN
+@@index([orderId])
 }
 
 model OrderItemAction {
-  id Int @id @default(autoincrement())
+id Int @id @default(autoincrement())
 
-  orderItemId Int
-  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+orderItemId Int
+orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
 
-  type     OrderItemActionType
-  quantity Int
-  reason   String?
+type OrderItemActionType
+quantity Int
+reason String?
 
-  idempotencyKey String
+idempotencyKey String
 
-  createdAt DateTime @default(now())
+createdAt DateTime @default(now())
 
-  @@unique([orderItemId, idempotencyKey])
-  @@index([orderItemId])
+@@unique([orderItemId, idempotencyKey])
+@@index([orderItemId])
+}
+
+enum CouponDiscountType {
+PERCENTAGE
+FIXED
+}
+
+model Coupon {
+id Int @id @default(autoincrement())
+
+code String @unique
+name String
+
+discountType CouponDiscountType
+discountValue Decimal @db.Decimal(10, 2)
+minimumOrderAmount Decimal @default(0) @db.Decimal(10, 2)
+maximumDiscountAmount Decimal? @db.Decimal(10, 2)
+
+startsOn DateTime @db.Date
+expiresOn DateTime @db.Date
+
+isActive Boolean @default(true)
+
+claims CouponClaim[]
+
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
+
+@@index([isActive])
+@@index([startsOn, expiresOn])
+}
+
+model CouponClaim {
+id Int @id @default(autoincrement())
+
+couponId Int
+userId Int
+
+coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+claimedAt DateTime @default(now())
+usedAt DateTime?
+
+orderId Int? @unique
+order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+@@unique([couponId, userId])
+@@index([userId])
+@@index([couponId])
 }
 
 enum AddressLabel {
-  HOME
-  OFFICE
-  OTHER
+HOME
+OFFICE
+OTHER
 }
 
 enum PaymentMethod {
-  COD
-  ONLINE
+COD
+ONLINE
 }
 
 enum PaymentStatus {
-  PENDING
-  PAID
-  FAILED
+PENDING
+PAID
+FAILED
 }
 
 enum OrderStatus {
-  PENDING
-  CONFIRMED
-  CANCELLED
-  DELIVERED
+PENDING
+CONFIRMED
+CANCELLED
+DELIVERED
 }
 
-
-
-
-
+enum OrderItemActionType {
+CANCEL
+RETURN
+}

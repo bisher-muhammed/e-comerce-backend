@@ -1,6 +1,13 @@
-import { Request, Response } from "express";
+import {
+  Request,
+  Response,
+} from "express";
 
-import { createCheckout, verifyPayment } from "../../services/customer/checkout.service";
+import {
+  createCheckout,
+  verifyPayment,
+} from "../../services/customer/checkout.service";
+
 import {
   checkoutSchema,
   verifyPaymentSchema,
@@ -8,56 +15,90 @@ import {
 
 import AppError from "../../errors/AppError";
 
-export const createCheckoutController = async (
-  req: Request,
-  res: Response
-) => {
-  const userId = req.user!.id;
 
-  const parsed = checkoutSchema.safeParse(req.body);
+export const createCheckoutController =
+  async (
+    req: Request,
+    res: Response
+  ) => {
+    const userId =
+      req.user!.id;
 
-  if (!parsed.success) {
-    throw new AppError(parsed.error.issues[0].message, 400);
-  }
+    const parsed =
+      checkoutSchema.safeParse(
+        req.body
+      );
 
-  // BUG FIX: the previous version dropped contactEmail/contactPhone
-  // entirely and shifted paymentMethod into the wrong parameter slot.
-  const result = await createCheckout(
-    userId,
-    parsed.data.addressId,
-    parsed.data.contactEmail,
-    parsed.data.contactPhone,
-    parsed.data.paymentMethod,
-    parsed.data.idempotencyKey
-  );
+    if (!parsed.success) {
+      throw new AppError(
+        parsed.error.issues[0]
+          .message,
+        400
+      );
+    }
 
-  res.status(201).json({
-    success: true,
-    data: result,
-  });
-};
+    const result =
+      await createCheckout(
+        userId,
 
-export const verifyPaymentController = async (
-  req: Request,
-  res: Response
-) => {
-  const userId = req.user!.id;
+        parsed.data.addressId,
 
-  const parsed = verifyPaymentSchema.safeParse(req.body);
+        parsed.data.contactEmail,
 
-  if (!parsed.success) {
-    throw new AppError(parsed.error.issues[0].message, 400);
-  }
+        parsed.data.contactPhone,
 
-  const order = await verifyPayment(
-    userId,
-    parsed.data.razorpay_order_id,
-    parsed.data.razorpay_payment_id,
-    parsed.data.razorpay_signature
-  );
+        parsed.data.paymentMethod,
 
-  res.status(200).json({
-    success: true,
-    data: order,
-  });
-};
+        parsed.data.idempotencyKey,
+
+
+        parsed.data.couponCode
+      );
+
+    res.status(201).json({
+      success: true,
+      data: result,
+    });
+  };
+
+
+export const verifyPaymentController =
+  async (
+    req: Request,
+    res: Response
+  ) => {
+    const userId =
+      req.user!.id;
+
+    const parsed =
+      verifyPaymentSchema.safeParse(
+        req.body
+      );
+
+    if (!parsed.success) {
+      throw new AppError(
+        parsed.error.issues[0]
+          .message,
+        400
+      );
+    }
+
+    const order =
+      await verifyPayment(
+        userId,
+
+        parsed.data
+          .razorpay_order_id,
+
+        parsed.data
+          .razorpay_payment_id,
+
+        parsed.data
+          .razorpay_signature
+      );
+
+    res.status(200).json({
+      success: true,
+      data: order,
+    });
+  };

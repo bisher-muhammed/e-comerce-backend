@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import { couponCodeSchema } from "./coupon.validation";
+
+
 export const checkoutSchema = z.object({
   addressId: z
     .number({
@@ -27,17 +30,31 @@ export const checkoutSchema = z.object({
       "Invalid phone number"
     ),
 
+
+  couponCode: couponCodeSchema.optional(),
+
   idempotencyKey: z
     .string()
     .uuid("idempotencyKey must be a valid UUID"),
 });
 
-export type CheckoutFormData = z.infer<typeof checkoutSchema>;
+export type CheckoutFormData =
+  z.infer<typeof checkoutSchema>;
+
 
 export const verifyPaymentSchema = z.object({
-  razorpay_order_id: z.string().min(1, "Missing razorpay_order_id"),
-  razorpay_payment_id: z.string().min(1, "Missing razorpay_payment_id"),
-  razorpay_signature: z.string().min(1, "Missing razorpay_signature"),
+  razorpay_order_id: z
+    .string()
+    .min(1, "Missing razorpay_order_id"),
+
+  razorpay_payment_id: z
+    .string()
+    .min(1, "Missing razorpay_payment_id"),
+
+  razorpay_signature: z
+    .string()
+    .min(1, "Missing razorpay_signature"),
 });
 
-export type VerifyPaymentFormData = z.infer<typeof verifyPaymentSchema>;
+export type VerifyPaymentFormData =
+  z.infer<typeof verifyPaymentSchema>;

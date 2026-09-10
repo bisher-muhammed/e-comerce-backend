@@ -1,12 +1,12 @@
 import crypto from "crypto";
+
 import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
+
 import { OrderStatus } from "../../../generated/prisma/enums";
 import { Prisma } from "../../../generated/prisma/client";
 
-// ============================================================
-// HELPERS
-// ============================================================
+
 
 function isIdempotencyConflict(err: unknown): boolean {
     return (
@@ -15,9 +15,33 @@ function isIdempotencyConflict(err: unknown): boolean {
     );
 }
 
-// ============================================================
-// ORDER SELECT
-// ============================================================
+
+function calculateCouponDiscountPortion(
+    orderSubtotal: Prisma.Decimal,
+    orderCouponDiscount: Prisma.Decimal | null,
+    cancellationAmount: Prisma.Decimal
+): Prisma.Decimal {
+    if (
+        !orderCouponDiscount ||
+        orderCouponDiscount.lte(0) ||
+        orderSubtotal.lte(0) ||
+        cancellationAmount.lte(0)
+    ) {
+        return new Prisma.Decimal(0);
+    }
+
+    const portion = orderCouponDiscount
+        .mul(cancellationAmount)
+        .div(orderSubtotal)
+        .toDecimalPlaces(2);
+
+    return Prisma.Decimal.min(
+        portion,
+        orderCouponDiscount
+    );
+}
+
+
 
 const orderDetailsSelect = {
     id: true,
@@ -42,6 +66,8 @@ const orderDetailsSelect = {
 
     // Financial values
     subtotal: true,
+    couponCode: true,
+    couponDiscount: true,
     total: true,
     cancelledAmount: true,
     refundedAmount: true,
@@ -76,7 +102,9 @@ const orderDetailsSelect = {
                     productColor: {
                         select: {
                             images: {
-                                where: { isPrimary: true },
+                                where: {
+                                    isPrimary: true,
+                                },
                                 select: {
                                     url: true,
                                     altText: true,
@@ -91,9 +119,7 @@ const orderDetailsSelect = {
     },
 } as const;
 
-// ============================================================
-// GET ORDER BY ID
-// ============================================================
+
 
 export async function getOrderByIdForUser(
     orderId: number,
@@ -114,9 +140,7 @@ export async function getOrderByIdForUser(
     return order;
 }
 
-// ============================================================
-// LIST ORDERS — search + date filter
-// ============================================================
+
 
 export async function listOrdersForUser(
     userId: number,
@@ -142,8 +166,12 @@ export async function listOrdersForUser(
         startDate || endDate
             ? {
                   [dateField]: {
-                      ...(startDate && { gte: startDate }),
-                      ...(endDate && { lte: endDate }),
+                      ...(startDate && {
+                          gte: startDate,
+                      }),
+                      ...(endDate && {
+                          lte: endDate,
+                      }),
                   },
               }
             : {};
@@ -184,25 +212,33 @@ export async function listOrdersForUser(
     const [orders, total] = await prisma.$transaction([
         prisma.order.findMany({
             where,
+
             select: {
                 id: true,
                 status: true,
                 paymentMethod: true,
                 paymentStatus: true,
+
                 subtotal: true,
+                couponCode: true,
+                couponDiscount: true,
                 total: true,
+
                 expiresAt: true,
                 createdAt: true,
                 updatedAt: true,
+
                 _count: {
                     select: {
                         items: true,
                     },
                 },
             },
+
             orderBy: {
                 createdAt: "desc",
             },
+
             skip: (page - 1) * limit,
             take: limit,
         }),
@@ -214,6 +250,7 @@ export async function listOrdersForUser(
 
     return {
         orders,
+
         pagination: {
             page,
             limit,
@@ -223,22 +260,7 @@ export async function listOrdersForUser(
     };
 }
 
-// ============================================================
-// ORDER-LEVEL CANCEL
-//
-// Cancels every remaining quantity in the order.
-//
-// Financial effect:
-//
-// cancelledAmount += value of all remaining quantities
-// subtotal        -= value of all remaining quantities
-// total           -= value of all remaining quantities
-//
-// Inventory effect:
-//
-// productVariant.stock += cancelled quantity
-//
-// ============================================================
+
 
 export async function cancelOrder(
     orderId: number,
@@ -251,9 +273,11 @@ export async function cancelOrder(
             id: orderId,
             userId,
         },
+
         select: {
             id: true,
             status: true,
+
             items: {
                 select: {
                     id: true,
@@ -269,17 +293,16 @@ export async function cancelOrder(
         throw new AppError("Order not found", 404);
     }
 
-    // --------------------------------------------------------
-    // Already cancelled
-    // --------------------------------------------------------
+
 
     if (order.status === "CANCELLED") {
-        return getOrderByIdForUser(orderId, userId);
+        return getOrderByIdForUser(
+            orderId,
+            userId
+        );
     }
 
-    // --------------------------------------------------------
-    // Cancellation allowed only for pending/confirmed
-    // --------------------------------------------------------
+
 
     if (
         order.status !== "PENDING" &&
@@ -292,7 +315,8 @@ export async function cancelOrder(
     }
 
     const activeItems = order.items.filter(
-        (item) => item.remainingQuantity > 0
+        (item) =>
+            item.remainingQuantity > 0
     );
 
     if (activeItems.length === 0) {
@@ -304,16 +328,37 @@ export async function cancelOrder(
 
     try {
         await prisma.$transaction(async (tx) => {
-            let cancellationAmount = new Prisma.Decimal(0);
+           
 
-            // ------------------------------------------------
-            // Cancel every remaining quantity
-            // ------------------------------------------------
+            const currentOrder =
+                await tx.order.findUnique({
+                    where: {
+                        id: orderId,
+                    },
+
+                    select: {
+                        subtotal: true,
+                        couponDiscount: true,
+                        total: true,
+                    },
+                });
+
+            if (!currentOrder) {
+                throw new AppError(
+                    "Order not found",
+                    404
+                );
+            }
+
+            let cancellationAmount =
+                new Prisma.Decimal(0);
+
 
             for (const item of activeItems) {
-                const quantity = item.remainingQuantity;
+                const quantity =
+                    item.remainingQuantity;
 
-                // Calculate value from immutable order-item price
+                
                 const itemCancellationAmount =
                     item.price.mul(quantity);
 
@@ -336,26 +381,27 @@ export async function cancelOrder(
                     },
                 });
 
-                // --------------------------------------------
-                // Update item atomically
-                // --------------------------------------------
 
-                const updated = await tx.orderItem.updateMany({
-                    where: {
-                        id: item.id,
-                        remainingQuantity: {
-                            gte: quantity,
+                const updated =
+                    await tx.orderItem.updateMany({
+                        where: {
+                            id: item.id,
+
+                            remainingQuantity: {
+                                gte: quantity,
+                            },
                         },
-                    },
-                    data: {
-                        remainingQuantity: {
-                            decrement: quantity,
+
+                        data: {
+                            remainingQuantity: {
+                                decrement: quantity,
+                            },
+
+                            cancelledQuantity: {
+                                increment: quantity,
+                            },
                         },
-                        cancelledQuantity: {
-                            increment: quantity,
-                        },
-                    },
-                });
+                    });
 
                 if (updated.count === 0) {
                     throw new AppError(
@@ -364,14 +410,12 @@ export async function cancelOrder(
                     );
                 }
 
-                // --------------------------------------------
-                // Restock cancelled quantity
-                // --------------------------------------------
 
                 await tx.productVariant.update({
                     where: {
                         id: item.productVariantId,
                     },
+
                     data: {
                         stock: {
                             increment: quantity,
@@ -380,60 +424,69 @@ export async function cancelOrder(
                 });
             }
 
-            // ------------------------------------------------
-            // Update order financials
-            // ------------------------------------------------
+
 
             await tx.order.update({
                 where: {
                     id: orderId,
                 },
+
                 data: {
                     status: "CANCELLED",
 
-                    cancellationReason: reason,
+                    cancellationReason:
+                        reason,
 
                     cancelledAmount: {
-                        increment: cancellationAmount,
+                        increment:
+                            cancellationAmount,
                     },
 
-                    subtotal: {
-                        decrement: cancellationAmount,
-                    },
+                    subtotal: new Prisma.Decimal(0),
 
-                    total: {
-                        decrement: cancellationAmount,
-                    },
+                    couponDiscount:
+                        new Prisma.Decimal(0),
+
+                    total: new Prisma.Decimal(0),
                 },
             });
         });
     } catch (err) {
-        // Same idempotency key means this request was already
-        // successfully processed.
-        if (isIdempotencyConflict(err)) {
-            const current = await prisma.order.findUnique({
-                where: {
-                    id: orderId,
-                },
-                select: {
-                    status: true,
-                },
-            });
 
-            if (current?.status === "CANCELLED") {
-                return getOrderByIdForUser(orderId, userId);
+
+        if (isIdempotencyConflict(err)) {
+            const current =
+                await prisma.order.findUnique({
+                    where: {
+                        id: orderId,
+                    },
+
+                    select: {
+                        status: true,
+                    },
+                });
+
+            if (
+                current?.status ===
+                "CANCELLED"
+            ) {
+                return getOrderByIdForUser(
+                    orderId,
+                    userId
+                );
             }
         }
 
         throw err;
     }
 
-    return getOrderByIdForUser(orderId, userId);
+    return getOrderByIdForUser(
+        orderId,
+        userId
+    );
 }
 
-// ============================================================
-// ITEM MUTATION SELECT
-// ============================================================
+
 
 const orderItemMutationSelect = {
     id: true,
@@ -443,35 +496,7 @@ const orderItemMutationSelect = {
     updatedAt: true,
 } as const;
 
-// ============================================================
-// ITEM-LEVEL CANCEL
-//
-// Cancels a specific quantity from one order item.
-//
-// Example:
-//
-// price = 500
-// quantity = 5
-// cancel = 2
-//
-// cancellationAmount = 500 * 2 = 1000
-//
-// Order:
-//
-// cancelledAmount += 1000
-// subtotal        -= 1000
-// total           -= 1000
-//
-// Item:
-//
-// remainingQuantity -= 2
-// cancelledQuantity += 2
-//
-// Product:
-//
-// stock += 2
-//
-// ============================================================
+
 
 export async function cancelOrderItem(
     orderId: number,
@@ -481,35 +506,40 @@ export async function cancelOrderItem(
     idempotencyKey: string,
     reason?: string
 ) {
-    const item = await prisma.orderItem.findFirst({
-        where: {
-            id: itemId,
-            orderId,
-            order: {
-                userId,
-            },
-        },
-        select: {
-            id: true,
-            price: true,
-            remainingQuantity: true,
-            productVariantId: true,
+    const item =
+        await prisma.orderItem.findFirst({
+            where: {
+                id: itemId,
 
-            order: {
-                select: {
-                    status: true,
+                orderId,
+
+                order: {
+                    userId,
                 },
             },
-        },
-    });
+
+            select: {
+                id: true,
+                price: true,
+                remainingQuantity: true,
+                productVariantId: true,
+
+                order: {
+                    select: {
+                        status: true,
+                    },
+                },
+            },
+        });
 
     if (!item) {
-        throw new AppError("Order item not found", 404);
+        throw new AppError(
+            "Order item not found",
+            404
+        );
     }
 
-    // --------------------------------------------------------
-    // Check order status
-    // --------------------------------------------------------
+
 
     if (
         item.order.status !== "PENDING" &&
@@ -521,162 +551,217 @@ export async function cancelOrderItem(
         );
     }
 
-    // --------------------------------------------------------
-    // Check remaining quantity
-    // --------------------------------------------------------
 
-    if (quantity > item.remainingQuantity) {
+
+    if (
+        quantity >
+        item.remainingQuantity
+    ) {
         throw new AppError(
             `Cannot cancel ${quantity} unit(s); only ${item.remainingQuantity} remain active`,
             409
         );
     }
 
-    // --------------------------------------------------------
-    // Calculate cancellation value
-    //
-    // IMPORTANT:
-    // Use OrderItem.price, NOT ProductVariant.price.
-    //
-    // OrderItem.price is the historical price actually used
-    // when this order was created.
-    // --------------------------------------------------------
 
-    const cancellationAmount = item.price.mul(quantity);
+
+    const cancellationAmount =
+        item.price.mul(quantity);
 
     try {
-        return await prisma.$transaction(async (tx) => {
-            // ------------------------------------------------
-            // Record cancellation action
-            // ------------------------------------------------
+        return await prisma.$transaction(
+            async (tx) => {
+                // ------------------------------------------------
+                // Read CURRENT order financial values.
+                //
+                // This must happen inside the transaction.
+                // ------------------------------------------------
 
-            await tx.orderItemAction.create({
-                data: {
-                    orderItemId: itemId,
-                    type: "CANCEL",
-                    quantity,
-                    reason,
-                    idempotencyKey,
-                },
-            });
+                const currentOrder =
+                    await tx.order.findUnique({
+                        where: {
+                            id: orderId,
+                        },
 
-            // ------------------------------------------------
-            // Update item atomically
-            // ------------------------------------------------
+                        select: {
+                            subtotal: true,
+                            couponDiscount: true,
+                            total: true,
+                        },
+                    });
 
-            const updated = await tx.orderItem.updateMany({
-                where: {
-                    id: itemId,
-                    orderId,
-                    remainingQuantity: {
-                        gte: quantity,
-                    },
-                },
-                data: {
-                    remainingQuantity: {
-                        decrement: quantity,
-                    },
-                    cancelledQuantity: {
-                        increment: quantity,
-                    },
-                },
-            });
+                if (!currentOrder) {
+                    throw new AppError(
+                        "Order not found",
+                        404
+                    );
+                }
 
-            if (updated.count === 0) {
-                throw new AppError(
-                    `Cannot cancel ${quantity} unit(s); insufficient remaining quantity`,
-                    409
-                );
-            }
 
-            // ------------------------------------------------
-            // Restock cancelled quantity
-            // ------------------------------------------------
 
-            await tx.productVariant.update({
-                where: {
-                    id: item.productVariantId,
-                },
-                data: {
-                    stock: {
-                        increment: quantity,
-                    },
-                },
-            });
-
-            // ------------------------------------------------
-            // Update order financials
-            // ------------------------------------------------
-
-            await tx.order.update({
-                where: {
-                    id: orderId,
-                },
-                data: {
-                    cancelledAmount: {
-                        increment: cancellationAmount,
-                    },
-
-                    subtotal: {
-                        decrement: cancellationAmount,
-                    },
-
-                    total: {
-                        decrement: cancellationAmount,
-                    },
-                },
-            });
-
-            // ------------------------------------------------
-            // Determine whether entire order is now cancelled
-            // ------------------------------------------------
-
-            const remainingActive = await tx.orderItem.count({
-                where: {
-                    orderId,
-                    remainingQuantity: {
-                        gt: 0,
-                    },
-                },
-            });
-
-            if (remainingActive === 0) {
-                await tx.order.update({
-                    where: {
-                        id: orderId,
-                    },
+                await tx.orderItemAction.create({
                     data: {
-                        status: "CANCELLED",
+                        orderItemId: itemId,
+                        type: "CANCEL",
+                        quantity,
+                        reason,
+                        idempotencyKey,
                     },
                 });
+
+
+
+                const updated =
+                    await tx.orderItem.updateMany({
+                        where: {
+                            id: itemId,
+
+                            orderId,
+
+                            remainingQuantity: {
+                                gte: quantity,
+                            },
+                        },
+
+                        data: {
+                            remainingQuantity: {
+                                decrement: quantity,
+                            },
+
+                            cancelledQuantity: {
+                                increment: quantity,
+                            },
+                        },
+                    });
+
+                if (updated.count === 0) {
+                    throw new AppError(
+                        `Cannot cancel ${quantity} unit(s); insufficient remaining quantity`,
+                        409
+                    );
+                }
+
+
+
+                await tx.productVariant.update({
+                    where: {
+                        id: item.productVariantId,
+                    },
+
+                    data: {
+                        stock: {
+                            increment: quantity,
+                        },
+                    },
+                });
+
+
+
+                const couponDiscountPortion =
+                    calculateCouponDiscountPortion(
+                        currentOrder.subtotal,
+                        currentOrder.couponDiscount,
+                        cancellationAmount
+                    );
+
+
+                const netCancellationAmount =
+                    cancellationAmount.sub(
+                        couponDiscountPortion
+                    );
+
+
+
+                const remainingActive =
+                    await tx.orderItem.count({
+                        where: {
+                            orderId,
+
+                            remainingQuantity: {
+                                gt: 0,
+                            },
+                        },
+                    });
+
+
+                if (remainingActive === 0) {
+                    await tx.order.update({
+                        where: {
+                            id: orderId,
+                        },
+
+                        data: {
+                            status: "CANCELLED",
+
+                            cancelledAmount: {
+                                increment:
+                                    cancellationAmount,
+                            },
+
+                            subtotal:
+                                new Prisma.Decimal(0),
+
+                            couponDiscount:
+                                new Prisma.Decimal(0),
+
+                            total:
+                                new Prisma.Decimal(0),
+                        },
+                    });
+                } else {
+
+
+                    await tx.order.update({
+                        where: {
+                            id: orderId,
+                        },
+
+                        data: {
+                            cancelledAmount: {
+                                increment:
+                                    cancellationAmount,
+                            },
+
+                            subtotal: {
+                                decrement:
+                                    cancellationAmount,
+                            },
+
+                            couponDiscount: {
+                                decrement:
+                                    couponDiscountPortion,
+                            },
+
+                            total: {
+                                decrement:
+                                    netCancellationAmount,
+                            },
+                        },
+                    });
+                }
+
+
+                return tx.orderItem.findUniqueOrThrow({
+                    where: {
+                        id: itemId,
+                    },
+
+                    select:
+                        orderItemMutationSelect,
+                });
             }
-
-            // ------------------------------------------------
-            // Return only the item mutation result
-            //
-            // Existing frontend contract is preserved.
-            // The frontend can refetch order details to obtain
-            // the updated subtotal/total.
-            // ------------------------------------------------
-
-            return tx.orderItem.findUniqueOrThrow({
-                where: {
-                    id: itemId,
-                },
-                select: orderItemMutationSelect,
-            });
-        });
+        );
     } catch (err) {
-        // ----------------------------------------------------
-        // Idempotency
-        // ----------------------------------------------------
+
 
         if (isIdempotencyConflict(err)) {
             return prisma.orderItem.findUniqueOrThrow({
                 where: {
                     id: itemId,
                 },
-                select: orderItemMutationSelect,
+
+                select:
+                    orderItemMutationSelect,
             });
         }
 
@@ -684,30 +769,7 @@ export async function cancelOrderItem(
     }
 }
 
-// ============================================================
-// ITEM-LEVEL RETURN
-//
-// IMPORTANT:
-//
-// A customer return is NOT the same thing as a cancellation.
-//
-// Customer requests return:
-//
-// remainingQuantity -= quantity
-// returnedQuantity  += quantity
-//
-// But:
-//
-// stock              -> unchanged
-// subtotal           -> unchanged
-// total              -> unchanged
-// refundedAmount     -> unchanged
-//
-// Actual refund amount should be added to refundedAmount only
-// when your refund process actually succeeds.
-//
-// Restocking should happen after admin inspection.
-// ============================================================
+
 
 export async function returnOrderItem(
     orderId: number,
@@ -717,46 +779,52 @@ export async function returnOrderItem(
     reason: string,
     idempotencyKey: string
 ) {
-    const item = await prisma.orderItem.findFirst({
-        where: {
-            id: itemId,
-            orderId,
-            order: {
-                userId,
-            },
-        },
-        select: {
-            id: true,
-            remainingQuantity: true,
+    const item =
+        await prisma.orderItem.findFirst({
+            where: {
+                id: itemId,
 
-            order: {
-                select: {
-                    status: true,
+                orderId,
+
+                order: {
+                    userId,
                 },
             },
-        },
-    });
+
+            select: {
+                id: true,
+                remainingQuantity: true,
+
+                order: {
+                    select: {
+                        status: true,
+                    },
+                },
+            },
+        });
 
     if (!item) {
-        throw new AppError("Order item not found", 404);
+        throw new AppError(
+            "Order item not found",
+            404
+        );
     }
 
-    // --------------------------------------------------------
-    // Only delivered orders can be returned
-    // --------------------------------------------------------
 
-    if (item.order.status !== "DELIVERED") {
+
+    if (
+        item.order.status !== "DELIVERED"
+    ) {
         throw new AppError(
             "Only items on delivered orders can be returned",
             400
         );
     }
 
-    // --------------------------------------------------------
-    // Check returnable quantity
-    // --------------------------------------------------------
-
-    if (quantity > item.remainingQuantity) {
+    if (
+        quantity >
+        item.remainingQuantity
+    ) {
         throw new AppError(
             `Cannot return ${quantity} unit(s); only ${item.remainingQuantity} remain eligible`,
             409
@@ -764,71 +832,69 @@ export async function returnOrderItem(
     }
 
     try {
-        return await prisma.$transaction(async (tx) => {
-            // ------------------------------------------------
-            // Record return action
-            // ------------------------------------------------
+        return await prisma.$transaction(
+            async (tx) => {
 
-            await tx.orderItemAction.create({
-                data: {
-                    orderItemId: itemId,
-                    type: "RETURN",
-                    quantity,
-                    reason,
-                    idempotencyKey,
-                },
-            });
-
-            // ------------------------------------------------
-            // Update item atomically
-            // ------------------------------------------------
-
-            const updated = await tx.orderItem.updateMany({
-                where: {
-                    id: itemId,
-                    orderId,
-                    remainingQuantity: {
-                        gte: quantity,
+                await tx.orderItemAction.create({
+                    data: {
+                        orderItemId: itemId,
+                        type: "RETURN",
+                        quantity,
+                        reason,
+                        idempotencyKey,
                     },
-                },
-                data: {
-                    remainingQuantity: {
-                        decrement: quantity,
-                    },
-                    returnedQuantity: {
-                        increment: quantity,
-                    },
-                },
-            });
+                });
 
-            if (updated.count === 0) {
-                throw new AppError(
-                    `Cannot return ${quantity} unit(s); insufficient remaining quantity`,
-                    409
-                );
+
+                const updated =
+                    await tx.orderItem.updateMany({
+                        where: {
+                            id: itemId,
+
+                            orderId,
+
+                            remainingQuantity: {
+                                gte: quantity,
+                            },
+                        },
+
+                        data: {
+                            remainingQuantity: {
+                                decrement: quantity,
+                            },
+
+                            returnedQuantity: {
+                                increment: quantity,
+                            },
+                        },
+                    });
+
+                if (updated.count === 0) {
+                    throw new AppError(
+                        `Cannot return ${quantity} unit(s); insufficient remaining quantity`,
+                        409
+                    );
+                }
+
+                return tx.orderItem.findUniqueOrThrow({
+                    where: {
+                        id: itemId,
+                    },
+
+                    select:
+                        orderItemMutationSelect,
+                });
             }
-
-            // ------------------------------------------------
-            // No stock update here.
-            //
-            // Admin inspection determines whether the item
-            // can be put back into sellable inventory.
-            // ------------------------------------------------
-
-            return tx.orderItem.findUniqueOrThrow({
-                where: {
-                    id: itemId,
-                },
-                select: orderItemMutationSelect,
-            });
-        });
+        );
     } catch (err) {
         if (isIdempotencyConflict(err)) {
             return prisma.orderItem.findUniqueOrThrow({
                 where: {
                     id: itemId,
                 },
-                select: orderItemMutationSelect,
+
+                select:
+                    orderItemMutationSelect,
             });
         }
 
@@ -836,18 +902,7 @@ export async function returnOrderItem(
     }
 }
 
-// ============================================================
-// VERIFY RAZORPAY PAYMENT
-//
-// Stock was already deducted when the order was created.
-// Therefore payment verification does NOT touch stock.
-//
-// It only:
-//
-// paymentStatus = PAID
-// status        = CONFIRMED
-//
-// ============================================================
+
 
 export async function verifyPayment(
     orderId: number,
@@ -855,30 +910,33 @@ export async function verifyPayment(
     razorpayPaymentId: string,
     razorpaySignature: string
 ) {
-    const order = await prisma.order.findFirst({
-        where: {
-            id: orderId,
-            userId,
-        },
-    });
+    const order =
+        await prisma.order.findFirst({
+            where: {
+                id: orderId,
+                userId,
+            },
+        });
 
     if (!order) {
-        throw new AppError("Order not found", 404);
+        throw new AppError(
+            "Order not found",
+            404
+        );
     }
 
-    // --------------------------------------------------------
-    // Already paid
-    // --------------------------------------------------------
 
-    if (order.paymentStatus === "PAID") {
+    if (
+        order.paymentStatus === "PAID"
+    ) {
         return order;
     }
 
-    // --------------------------------------------------------
-    // Must be online payment
-    // --------------------------------------------------------
 
-    if (order.paymentMethod !== "ONLINE") {
+
+    if (
+        order.paymentMethod !== "ONLINE"
+    ) {
         throw new AppError(
             "This order does not use online payment",
             400
@@ -892,11 +950,9 @@ export async function verifyPayment(
         );
     }
 
-    // --------------------------------------------------------
-    // Razorpay secret
-    // --------------------------------------------------------
 
-    const secret = process.env.RAZORPAY_KEY_SECRET;
+    const secret =
+        process.env.RAZORPAY_KEY_SECRET;
 
     if (!secret) {
         throw new AppError(
@@ -905,29 +961,33 @@ export async function verifyPayment(
         );
     }
 
-    // --------------------------------------------------------
-    // Verify Razorpay signature
-    // --------------------------------------------------------
 
-    const generatedSignature = crypto
-        .createHmac("sha256", secret)
-        .update(
-            `${order.razorpayOrderId}|${razorpayPaymentId}`
-        )
-        .digest("hex");
+    const generatedSignature =
+        crypto
+            .createHmac(
+                "sha256",
+                secret
+            )
+            .update(
+                `${order.razorpayOrderId}|${razorpayPaymentId}`
+            )
+            .digest("hex");
 
-    const generatedBuffer = Buffer.from(
-        generatedSignature,
-        "utf8"
-    );
+    const generatedBuffer =
+        Buffer.from(
+            generatedSignature,
+            "utf8"
+        );
 
-    const receivedBuffer = Buffer.from(
-        razorpaySignature,
-        "utf8"
-    );
+    const receivedBuffer =
+        Buffer.from(
+            razorpaySignature,
+            "utf8"
+        );
 
     if (
-        generatedBuffer.length !== receivedBuffer.length ||
+        generatedBuffer.length !==
+            receivedBuffer.length ||
         !crypto.timingSafeEqual(
             generatedBuffer,
             receivedBuffer
@@ -939,53 +999,55 @@ export async function verifyPayment(
         );
     }
 
-    // --------------------------------------------------------
-    // Update payment status atomically
-    // --------------------------------------------------------
+    const updatedOrder =
+        await prisma.$transaction(
+            async (tx) => {
+                const currentOrder =
+                    await tx.order.findUnique({
+                        where: {
+                            id: orderId,
+                        },
 
-    const updatedOrder = await prisma.$transaction(
-        async (tx) => {
-            const currentOrder =
-                await tx.order.findUnique({
+                        select: {
+                            id: true,
+                            paymentStatus: true,
+                        },
+                    });
+
+                if (!currentOrder) {
+                    throw new AppError(
+                        "Order not found",
+                        404
+                    );
+                }
+
+
+                if (
+                    currentOrder.paymentStatus ===
+                    "PAID"
+                ) {
+                    return tx.order.findUnique({
+                        where: {
+                            id: orderId,
+                        },
+                    });
+                }
+
+                return tx.order.update({
                     where: {
                         id: orderId,
                     },
-                    select: {
-                        id: true,
-                        paymentStatus: true,
-                    },
-                });
 
-            if (!currentOrder) {
-                throw new AppError(
-                    "Order not found",
-                    404
-                );
-            }
+                    data: {
+                        paymentStatus: "PAID",
+                        status: "CONFIRMED",
 
-            // Another request already completed payment
-            if (currentOrder.paymentStatus === "PAID") {
-                return tx.order.findUnique({
-                    where: {
-                        id: orderId,
+                        razorpayPaymentId,
+                        razorpaySignature,
                     },
                 });
             }
-
-            return tx.order.update({
-                where: {
-                    id: orderId,
-                },
-                data: {
-                    paymentStatus: "PAID",
-                    status: "CONFIRMED",
-                    razorpayPaymentId,
-                    razorpaySignature,
-                },
-            });
-        }
-    );
+        );
 
     return updatedOrder;
 }
-
