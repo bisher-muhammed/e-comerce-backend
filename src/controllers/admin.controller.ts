@@ -7,7 +7,6 @@ import {
 } from "../services/admin/create-admin.service";
 
 import { CreateAdminInput } from "../validations/admin.validation";
-import { from } from "node:stream/iter";
 
 export const createAdminController = async (
   req: Request,

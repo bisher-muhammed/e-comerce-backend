@@ -38,9 +38,14 @@ export const getOrderDetails = async (req: Request, res: Response, next: NextFun
 export const updateOrderStatus = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { orderId } = orderIdParamSchema.parse(req.params);
-    const { status, reason } = updateOrderStatusBodySchema.parse(req.body);
+    const { status, reason, idempotencyKey } = updateOrderStatusBodySchema.parse(req.body);
 
-    const order = await orderService.updateOrderStatus(orderId, status, reason);
+    const order = await orderService.updateOrderStatus(
+      orderId,
+      status,
+      reason,
+      idempotencyKey
+    );
 
     res.status(200).json({
       success: true,
