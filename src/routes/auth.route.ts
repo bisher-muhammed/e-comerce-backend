@@ -3,6 +3,14 @@ import { Router } from "express";
 import { validate } from "../middlewares/validate.middleware";
 import { authenticate } from "../middlewares/auth.middleware";
 
+import {
+  loginLimiter,
+  refreshTokenLimiter,
+  registerLimiter,
+  resendOtpLimiter,
+  verifyOtpLimiter,
+} from "../middlewares/rate-limit.middleware";
+
 
 import {
   registerSchema,
@@ -28,23 +36,27 @@ router.get("/me", authenticate,getMe);
 
 router.post(
   "/register",
+  ...registerLimiter,
   validate({ body: registerSchema }),
   register
 );
 
 router.post(
   "/verify-otp",
+  ...verifyOtpLimiter,
   validate({ body: verifyOtpSchema }),
   verifyOtp
 );
 
 router.post(
   "/resend-otp",
+  ...resendOtpLimiter,
   validate({ body: resendOtpSchema }),
   resendOtp
 );
 
 router.post("/login",
+  ...loginLimiter,
   validate({ body: loginSchema }),
   login
 )
@@ -52,6 +64,7 @@ router.post("/login",
 
 router.post(
   "/refresh-token",
+  refreshTokenLimiter,
   refreshToken
 );
 

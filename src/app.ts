@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import healthRouter from "./routes/health.route";
 import authRouter from "./routes/auth.route";
@@ -18,9 +19,13 @@ import couponRouters from "./routes/admin/coupon.route";
 import couponRouter from "./routes/customer/coupon.route";
 import cors from "cors";
 import errorMiddleware from "./middlewares/error.middleware";
+import { globalLimiter } from "./middlewares/rate-limit.middleware";
+import { resolveTrustProxy } from "./utils/trust-proxy.util";
 
 import cookieParser from "cookie-parser";
 const app = express();
+
+app.set("trust proxy", resolveTrustProxy(process.env.TRUST_PROXY));
 
 app.use(
   cors({
@@ -33,6 +38,9 @@ app.use(express.json());
 app.use(cookieParser())
 
 app.use("/api/v1/health", healthRouter);
+
+app.use(globalLimiter);
+
 app.use("/api/v1/auth", authRouter);
 
 app.use("/api/v1/admin", adminRouter);

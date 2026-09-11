@@ -9,36 +9,7 @@
 
 ## 0. Blockers — broken right now
 ## 1. CRITICAL
-
-
-
-### C5. Product listing returns the entire catalogue, unpaginated
-
-[`customer/product.service.ts:3-37`](src/services/customer/product.service.ts#L3-L37) — no `take`, no `skip`, no `select`, no total count. `GET /api/v1/customer/products` returns *every* active product with *every* colour, image, and variant, plus full `description` and `details` text.
-
-At 500 products × 4 colours × 5 images × 6 sizes that is 500 + 2,000 + 10,000 + 12,000 rows in a single JSON response — comfortably 8–20 MB, multi-second TTFB, and `JSON.stringify` runs **synchronously on the event loop**, blocking every other request for its duration.
-
-[`admin/product.service.ts:461-466`](src/services/admin/product.service.ts#L461-L466) has the same problem.
-
-**Fix:** `take`/`skip` from query params; `select` only `{id, name, slug}` + one primary image + a price range; return `total` via `prisma.$transaction([findMany, count])`. [`customer/order.service.ts:122-141`](src/services/customer/order.service.ts#L122-L141) already gets this pattern right — copy it.
-
----
-
 ## 2. HIGH
-
-### H1. No rate limiting anywhere
-
-Confirmed: `express-rate-limit` is **not** in `package.json` and not in `node_modules`; `grep -rn "rateLimit\|rate-limit" src/` → nothing. Nothing throttles:
-
-| Endpoint | Consequence |
-|---|---|
-| `POST /auth/login` | unrestricted credential stuffing / password spraying, including against `SUPER_ADMIN` |
-| `POST /auth/verify-otp` | OTP brute force (see H2) |
-| `POST /auth/resend-otp` | **email bombing** of arbitrary addresses + burns your Gmail SMTP quota |
-| `POST /auth/register` | unlimited account creation |
-| `POST /customer/checkout` | denial-of-inventory (C4) |
-
-**Fix:** `express-rate-limit` — strict (5/15min) on `/auth/*` and `/checkout/*`, global elsewhere. Also set `app.set("trust proxy", 1)` (currently absent) or every request behind a proxy keys to the same IP.
 
 ### H2. OTP brute force → email-verification bypass / account pre-hijacking
 
