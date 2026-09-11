@@ -7,6 +7,7 @@ import { loginUser } from "../services/auth/login.service";
 import { refreshAccessToken } from "../services/auth/refresh.service";
 import prisma from "../config/prisma";
 import AppError from "../errors/AppError";
+import { accessTokenCookieOptions, refreshTokenCookieOptions, } from "../utils/auth-cookie.util";
 
 
 export const register = async (
@@ -79,19 +80,17 @@ export const login = async (
   try {
     const result = await loginUser(req.body);
 
-    res.cookie("access_token", result.accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 15 * 60 * 1000, // 15 minutes
-    });
+    res.cookie(
+      "access_token",
+      result.accessToken,
+      accessTokenCookieOptions
+    );
 
-    res.cookie("refresh_token", result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    res.cookie(
+      "refresh_token",
+      result.refreshToken,
+      refreshTokenCookieOptions
+    );
 
     return res.status(200).json({
       success: true,
@@ -160,12 +159,11 @@ export const refreshToken = async (
 
     const accessToken = await refreshAccessToken(refreshToken);
 
-    res.cookie("access_token", accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 15 * 60 * 1000,
-    });
+    res.cookie(
+      "access_token",
+      accessToken,
+      accessTokenCookieOptions
+    );
 
     return res.status(200).json({
       success: true,
