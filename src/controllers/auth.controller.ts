@@ -5,6 +5,7 @@ import { verifyRegistrationOtp } from "../services/auth/verify.service";
 import { resendRegistrationOtp } from "../services/auth/resend.service";
 import { loginUser } from "../services/auth/login.service";
 import { refreshAccessToken } from "../services/auth/refresh.service";
+import { logoutUser } from "../services/auth/logout.service";
 import prisma from "../config/prisma";
 import AppError from "../errors/AppError";
 import { accessTokenCookieOptions, clearAuthCookieOptions, refreshTokenCookieOptions, } from "../utils/auth-cookie.util";
@@ -120,6 +121,9 @@ export const logout = async (
       clearAuthCookieOptions
     );
 
+    // Cleared first so the browser is disarmed even if this fails
+    await logoutUser(req.cookies.refresh_token);
+
     return res.status(200).json({
       success: true,
       message: "Logged out successfully",
@@ -182,12 +186,19 @@ export const refreshToken = async (
       throw new AppError("Refresh token missing", 401);
     }
 
-    const accessToken = await refreshAccessToken(refreshToken);
+    const result = await refreshAccessToken(refreshToken);
 
     res.cookie(
       "access_token",
-      accessToken,
+      result.accessToken,
       accessTokenCookieOptions
+    );
+
+    // Rotated on every refresh — the cookie has to move with it
+    res.cookie(
+      "refresh_token",
+      result.refreshToken,
+      refreshTokenCookieOptions
     );
 
     return res.status(200).json({

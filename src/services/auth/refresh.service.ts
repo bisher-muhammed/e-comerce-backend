@@ -1,44 +1,16 @@
 import jwt from "jsonwebtoken";
-
 import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
-
-import {
-  generateAccessToken,
-  verifyRefreshToken,
-} from "../../utils/jwt";
+import { generateAccessToken, generateRefreshToken, verifyRefreshToken, RefreshTokenPayload, } from "../../utils/jwt";
+import { rotateRefreshSession } from "./refresh-session.service";
 
 export const refreshAccessToken = async (
-  refreshToken: string
+  token: string
 ) => {
+  let decoded: RefreshTokenPayload;
+
   try {
-    const decoded = verifyRefreshToken(refreshToken);
-
-    const user = await prisma.user.findUnique({
-      where: {
-        id: decoded.userId,
-      },
-      select: {
-        id: true,
-        role: true,
-        status: true,
-      },
-    });
-
-    if (!user) {
-      throw new AppError("User not found", 401);
-    }
-
-    if (user.status !== "ACTIVE") {
-      throw new AppError("Account is not active", 403);
-    }
-
-    const accessToken = generateAccessToken({
-      userId: user.id,
-      role: user.role,
-    });
-
-    return accessToken;
+    decoded = verifyRefreshToken(token);
   } catch (error) {
     if (error instanceof jwt.TokenExpiredError) {
       throw new AppError("Refresh token expired", 401);
@@ -50,4 +22,51 @@ export const refreshAccessToken = async (
 
     throw error;
   }
+
+  if (
+    typeof decoded.sid !== "string" ||
+    typeof decoded.jti !== "string"
+  ) {
+    throw new AppError("Invalid refresh token", 401);
+  }
+
+  const user = await prisma.user.findUnique({
+    where: {
+      id: decoded.userId,
+    },
+    select: {
+      id: true,
+      role: true,
+      status: true,
+    },
+  });
+
+  if (!user) {
+    throw new AppError("User not found", 401);
+  }
+
+  if (user.status !== "ACTIVE") {
+    throw new AppError("Account is not active", 403);
+  }
+
+  const jti = await rotateRefreshSession(
+    decoded.sid,
+    decoded.jti,
+    user.id
+  );
+
+  const payload = {
+    userId: user.id,
+    role: user.role,
+  };
+
+  return {
+    accessToken: generateAccessToken(payload),
+
+    refreshToken: generateRefreshToken({
+      ...payload,
+      sid: decoded.sid,
+      jti,
+    }),
+  };
 };

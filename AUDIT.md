@@ -11,16 +11,6 @@
 ## 1. CRITICAL
 ## 2. HIGH
 
-### H5. Refresh tokens are not rotated or revocable, and there is no logout
-
-[`refresh.service.ts:11-52`](src/services/auth/refresh.service.ts#L11-L52) verifies the JWT and mints a new access token. It **never rotates** the refresh token and **never checks a server-side allowlist/denylist**. `grep -rn "clearCookie\|logout" src/` → **no match**: there is no logout endpoint at all.
-
-A stolen refresh token is replayable until expiry and cannot be revoked — not by password change, not by the user, not by an admin (beyond flipping `status`, which does work).
-
-**Good:** [`refresh.service.ts:17-39`](src/services/auth/refresh.service.ts#L17-L39) re-reads the user, rejects non-`ACTIVE`, and takes `role` from the **database** rather than the token claim. Preserve that.
-
-**Fix:** per-token `jti` stored in Redis, rotate on every refresh, treat reuse of a consumed `jti` as theft and revoke the family; add `POST /auth/logout`.
-
 ### H6. Session dies hourly — refresh cookie TTL contradicts the token TTL
 
 | Token | JWT lifetime | Cookie `maxAge` |
@@ -174,7 +164,7 @@ This codebase gets several genuinely hard things right. Changing them would be a
 14. Set the connection pool `max` (M7) and add graceful shutdown (M8)
 15. Batch the transaction loops (H8)
 
-**Ongoing:** refresh-token rotation + logout (H5), Razorpay webhook (M5), Redis caching (M18).
+**Ongoing:** Razorpay webhook (M5), Redis caching (M18).
 
 ---
 
