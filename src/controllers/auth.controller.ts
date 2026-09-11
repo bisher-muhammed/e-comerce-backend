@@ -7,7 +7,7 @@ import { loginUser } from "../services/auth/login.service";
 import { refreshAccessToken } from "../services/auth/refresh.service";
 import prisma from "../config/prisma";
 import AppError from "../errors/AppError";
-import { accessTokenCookieOptions, refreshTokenCookieOptions, } from "../utils/auth-cookie.util";
+import { accessTokenCookieOptions, clearAuthCookieOptions, refreshTokenCookieOptions, } from "../utils/auth-cookie.util";
 
 
 export const register = async (
@@ -98,6 +98,31 @@ export const login = async (
       data: {
         user: result.user,
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const logout = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    res.clearCookie(
+      "access_token",
+      clearAuthCookieOptions
+    );
+
+    res.clearCookie(
+      "refresh_token",
+      clearAuthCookieOptions
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Logged out successfully",
     });
   } catch (error) {
     next(error);

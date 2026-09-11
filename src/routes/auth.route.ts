@@ -24,6 +24,7 @@ import {
   verifyOtp,
   resendOtp,
   login,
+  logout,
   getMe,
   refreshToken
 
@@ -60,6 +61,8 @@ router.post("/login",
   validate({ body: loginSchema }),
   login
 )
+
+router.post("/logout", logout);
 
 
 router.post(
