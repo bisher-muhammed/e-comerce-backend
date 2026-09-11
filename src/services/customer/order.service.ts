@@ -5,6 +5,7 @@ import AppError from "../../errors/AppError";
 
 import { OrderStatus } from "../../../generated/prisma/enums";
 import { Prisma } from "../../../generated/prisma/client";
+import { calculateCouponDiscountPortion } from "../../utils/order-amount.util";
 
 
 
@@ -14,33 +15,6 @@ function isIdempotencyConflict(err: unknown): boolean {
         err.code === "P2002"
     );
 }
-
-
-function calculateCouponDiscountPortion(
-    orderSubtotal: Prisma.Decimal,
-    orderCouponDiscount: Prisma.Decimal | null,
-    cancellationAmount: Prisma.Decimal
-): Prisma.Decimal {
-    if (
-        !orderCouponDiscount ||
-        orderCouponDiscount.lte(0) ||
-        orderSubtotal.lte(0) ||
-        cancellationAmount.lte(0)
-    ) {
-        return new Prisma.Decimal(0);
-    }
-
-    const portion = orderCouponDiscount
-        .mul(cancellationAmount)
-        .div(orderSubtotal)
-        .toDecimalPlaces(2);
-
-    return Prisma.Decimal.min(
-        portion,
-        orderCouponDiscount
-    );
-}
-
 
 
 const orderDetailsSelect = {

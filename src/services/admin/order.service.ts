@@ -10,6 +10,7 @@ import {
 import { Prisma } from "../../../generated/prisma/client";
 
 import { ListOrdersQuery } from "../../validations/admin/order.validation";
+import { calculateCouponDiscountPortion } from "../../utils/order-amount.util";
 
 
 const ORDER_STATUS_TRANSITIONS: Record<
@@ -506,6 +507,9 @@ export const updateOrderStatus = async (
                             id: true,
                             status: true,
 
+                            subtotal: true,
+                            couponDiscount: true,
+
                             items: {
                                 select: {
                                     id: true,
@@ -606,6 +610,18 @@ export const updateOrderStatus = async (
                         );
                 }
 
+                const couponDiscountPortion =
+                    calculateCouponDiscountPortion(
+                        order.subtotal,
+                        order.couponDiscount,
+                        cancellationAmount
+                    );
+
+                const netCancellationAmount =
+                    cancellationAmount.sub(
+                        couponDiscountPortion
+                    );
+
                 // ------------------------------------------------
                 // Cancel each active item
                 // ------------------------------------------------
@@ -693,16 +709,19 @@ export const updateOrderStatus = async (
                 //
                 // Original amount:
                 //
-                // subtotal = ₹3000
+                // subtotal       = ₹3000
+                // couponDiscount = ₹300
+                // total          = ₹2700
                 //
                 // Cancelled:
                 //
-                // ₹1000
+                // ₹1000 gross → ₹100 of the discount → ₹900 net
                 //
                 // Result:
                 //
-                // subtotal = ₹2000
-                // total    = ₹2000
+                // subtotal        = ₹2000
+                // couponDiscount  = ₹200
+                // total           = ₹1800
                 // cancelledAmount = ₹1000
                 //
                 // refundedAmount is NOT changed here.
@@ -733,9 +752,14 @@ export const updateOrderStatus = async (
                                 cancellationAmount,
                         },
 
+                        couponDiscount: {
+                            decrement:
+                                couponDiscountPortion,
+                        },
+
                         total: {
                             decrement:
-                                cancellationAmount,
+                                netCancellationAmount,
                         },
                     },
                 });
