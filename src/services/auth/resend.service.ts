@@ -1,58 +1,28 @@
-import argon2 from "argon2";
-import crypto from "node:crypto";
-
-import redis from "../../config/redis";
-import AppError from "../../errors/AppError";
-import { sendOtpEmail } from "../email.service";
+import {
+  getRegistrationSession,
+  issueOtp,
+  spendOtpResend,
+} from "./otp.service";
 
 export const resendRegistrationOtp = async (
   registrationToken: string
 ) => {
   // 1. Check registration session
-  const registrationKey = `registration:${registrationToken}`;
-
-  const storedData = await redis.get(registrationKey);
-
-  if (!storedData) {
-    throw new AppError(
-      "Registration session has expired. Please register again.",
-      400
+  const registrationData =
+    await getRegistrationSession(
+      registrationToken,
+      "Registration session has expired. Please register again."
     );
-  }
 
-  // 2. Get registration data
-  const registrationData = JSON.parse(storedData) as {
-    firstName: string;
-    lastName: string | null;
-    email: string;
-    passwordHash: string;
-  };
+  // 2. Spend one resend from the session budget
+  // Throws while the cooldown is open or once the budget is gone
+  await spendOtpResend(registrationToken);
 
-  // 3. Generate new OTP
-  const otp = crypto
-    .randomInt(100000, 1000000)
-    .toString();
-
-  // 4. Hash new OTP
-  const otpHash = await argon2.hash(otp);
-
-  // 5. Replace previous OTP
-  // New OTP gets a fresh 2-minute lifetime
-  const otpKey = `otp:${registrationToken}`;
-
-  await redis.set(otpKey, otpHash, {
-    EX: 120,
-  });
-
-  // 6. Send new OTP
-  await sendOtpEmail(
-    registrationData.email,
-    otp
-  );
-
-  // Development only
-  console.log(
-    `New OTP for ${registrationData.email}: ${otp}`
+  // 3. Replace the previous OTP
+  // New OTP gets a fresh 2-minute lifetime and a fresh guess budget
+  await issueOtp(
+    registrationToken,
+    registrationData.email
   );
 
   return {

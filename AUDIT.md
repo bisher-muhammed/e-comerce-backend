@@ -11,28 +11,6 @@
 ## 1. CRITICAL
 ## 2. HIGH
 
-### H2. OTP brute force → email-verification bypass / account pre-hijacking
-
-[`verify.service.ts:42-53`](src/services/auth/verify.service.ts#L42-L53)
-
-```ts
-const isValidOtp = await argon2.verify(otpHash, otp);
-if (!isValidOtp) {
-  throw new AppError("Invalid verification code", 400);
-}
-```
-
-The OTP key is **not deleted on failure** and **no attempt counter is incremented**. `/auth/resend-otp` can be called without limit, each call minting a fresh OTP with a fresh 120s window.
-
-**Exploit:**
-1. Attacker registers with the **victim's email** and the attacker's password. The API returns the `registrationToken` to the attacker ([`auth.controller.ts:23`](src/controllers/auth.controller.ts#L23)); the OTP goes to the victim's inbox.
-2. Attacker hammers `/auth/verify-otp`. The space is 10⁶, argon2 is only a soft throttle, and unlimited resends give unlimited fresh windows. Sustained parallel guessing succeeds in hours.
-3. [`verify.service.ts:73-97`](src/services/auth/verify.service.ts#L73-L97) creates the user `ACTIVE` with the **attacker's** password hash on the **victim's** email.
-
-Secondary: hammering `argon2.verify` saturates the libuv threadpool — an application-layer DoS by itself.
-
-**Fix:** Redis counter keyed on the registration token (and per-IP); delete the OTP and hard-fail after 5 attempts; cap resends to ~3 with a 60s cooldown; rate-limit `/auth/*`.
-
 ### H3. Coupons: no usage limit exists, claims are burned and never released
 
 **No global limit is possible.** [`schema.prisma:370-393`](prisma/schema.prisma#L370-L393) — `Coupon` has no `usageLimit`, `usedCount`, `perUserLimit`, or `maxRedemptions`. The only cap is an implicit one-per-user from `@@unique([couponId, userId])`. "FLAT500, first 100 customers" is unimplementable; a budget-capped campaign has no server-side stop.
@@ -133,7 +111,7 @@ The same shape appears in the checkout stock loop ([`checkout.service.ts:212,284
 |---|---|---|
 | M1 | **`helmet` installed but never mounted.** `package.json` lists it; `grep -rn "helmet" src/` → nothing. No HSTS, no `X-Content-Type-Options`, no frameguard, no CSP; `X-Powered-By: Express` still advertised. One line to fix. | [`app.ts`](src/app.ts) |
 | M2 | **Error handler leaks internals.** Returns raw `error.message` for unexpected errors — Prisma messages carry model names, field names, constraint names. Combined with M4, an attacker can map your schema by feeding bad IDs. | [`error.middleware.ts:34-39`](src/middlewares/error.middleware.ts#L34-L39) |
-| M3 | **Access tokens and plaintext OTPs written to logs.** `console.log("COOKIES:", req.cookies)` logs the raw JWT on **every authenticated request**; `register.service.ts:69` and `resend.service.ts:54` log the plaintext OTP; `authorize.middleware.ts:26-28` logs the full user object. Anyone with log access can impersonate any user. | [`auth.middleware.ts:15`](src/middlewares/auth.middleware.ts#L15) +4 |
+| M3 | **Access tokens and plaintext OTPs written to logs.** `console.log("COOKIES:", req.cookies)` logs the raw JWT on **every authenticated request**; `authorize.middleware.ts:26-28` logs the full user object. (The plaintext-OTP log is now gated to non-production in `otp.service.ts`.) Anyone with log access can impersonate any user. | [`auth.middleware.ts:15`](src/middlewares/auth.middleware.ts#L15) +4 |
 | M4 | **`PATCH /admin/customers/:id/status` has zero body validation.** `const { status } = req.body` goes straight into `prisma.user.update`. A `listCustomersSchema` exists but no `updateCustomerStatusSchema`. Not privilege escalation (only `status` is written) but it's the one mutating route with no validation. | [`admin/customer.route.ts:36-41`](src/routes/admin/customer.route.ts#L36-L41) |
 | M5 | **No Razorpay webhook.** `grep -rni "webhook" src/` → nothing. Payment state depends entirely on the browser calling back. User closes the tab after paying → money captured at Razorpay, order `PENDING` forever. No reconciliation for later refunds or disputes. | (missing) |
 | M6 | **Payment accepted without confirming capture.** Signature is validated but `razorpay.payments.fetch()` is never called. If the account isn't on auto-capture, a payment can be `authorized` but never `captured` — signature still valid, DB records `PAID`, authorization voids in ~5 days. You ship for money never collected. | [`checkout.service.ts:1273`](src/services/customer/checkout.service.ts#L1273) |
@@ -141,7 +119,7 @@ The same shape appears in the checkout stock loop ([`checkout.service.ts:212,284
 | M8 | **No graceful shutdown.** No `SIGTERM`/`SIGINT` handler, no `$disconnect()`, and `app.listen`'s return value isn't even captured. Rolling deploys kill in-flight transactions and orphan DB backends. | [`server.ts`](src/server.ts) |
 | M9 | **No compression.** Not in `package.json`. Given C5's multi-MB payloads, gzip is the cheapest single win available. | [`app.ts`](src/app.ts) |
 | M10 | **Uploads buffer ~1 GB in RAM.** `memoryStorage()` with `files: 200` × `fileSize: 5MB`, all held simultaneously then uploaded concurrently. Two concurrent admin requests OOM the process. MIME type is also taken from the client-supplied header with no magic-byte check. | [`upload.middleware.ts:16,42-45`](src/middlewares/upload.middleware.ts#L16) |
-| M11 | **SMTP awaited inline during register/resend.** Response time = argon2 hash + 2 Redis writes + a full SMTP handshake (300ms–3s, unbounded). If SMTP fails the **registration fails entirely** despite the Redis session already being written — user gets a 500 and a dangling token. Transporter has no `pool: true`, so every OTP opens a fresh TCP+TLS+AUTH connection. | [`register.service.ts:66`](src/services/auth/register.service.ts#L66) |
+| M11 | **SMTP awaited inline during register/resend.** Response time = argon2 hash + 2 Redis writes + a full SMTP handshake (300ms–3s, unbounded). If SMTP fails the **registration fails entirely** despite the Redis session already being written — user gets a 500 and a dangling token. Transporter has no `pool: true`, so every OTP opens a fresh TCP+TLS+AUTH connection. | [`otp.service.ts`](src/services/auth/otp.service.ts) |
 | M12 | **JWT algorithm not pinned.** `jwt.verify(token, SECRET)` with no `{ algorithms: ["HS256"] }`, no issuer/audience. jsonwebtoken v9 rejects `alg: none`, so not directly exploitable — but access and refresh tokens carry an **identical payload shape with no `typ` claim**, separated only by the two secrets differing. Set them to the same value by accident and the tokens become interchangeable. | [`jwt.ts:30-33,39-42`](src/utils/jwt.ts#L30-L33) |
 | M13 | **Money computed in JS floats.** Columns are `Decimal(10,2)` (correct), but `subtotal` and discount arithmetic uses `Number` + `toFixed(2)`. `Prisma.Decimal` is already used properly in `customer/order.service.ts:19-42`. Latent rather than demonstrated — no reproducible off-by-a-paisa case found — but free to remove. | [`checkout.service.ts:418-426`](src/services/customer/checkout.service.ts#L418-L426) |
 | M14 | **`endDate` filter excludes the requested day.** `z.coerce.date()` on `"2026-01-15"` yields UTC midnight; with `lte`, every order placed that day is excluded. For IST users the window is additionally shifted 5h30m. | [`customer/order.validation.ts:23-24`](src/validations/customer/order.validation.ts#L23-L24) |
@@ -213,7 +191,6 @@ This codebase gets several genuinely hard things right. Changing them would be a
 
 **Then — security hardening:**
 8. `app.use(helmet())` and `express-rate-limit` (M1, H1) — an afternoon, very high value
-9. OTP attempt cap + resend cooldown (H2)
 10. Strip token/OTP logging (M3)
 11. Generic production error messages (M2)
 12. `npm audit fix` (H7)
