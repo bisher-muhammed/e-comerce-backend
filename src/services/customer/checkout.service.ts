@@ -1,7 +1,7 @@
-import Razorpay from "razorpay";
 import crypto from "crypto";
 
 import prisma from "../../config/prisma";
+import razorpay from "../../config/razorpay";
 
 import AppError from "../../errors/AppError";
 
@@ -19,15 +19,6 @@ import {
   consumeCouponClaim,
   releaseCouponClaimForOrder,
 } from "../../utils/coupon-redemption.util";
-
-// ============================================================
-// RAZORPAY
-// ============================================================
-
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID!,
-  key_secret: process.env.RAZORPAY_KEY_SECRET!,
-});
 
 const ONLINE_PAYMENT_WINDOW_MS =
   15 * 60 * 1000;

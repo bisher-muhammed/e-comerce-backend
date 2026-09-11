@@ -10,8 +10,9 @@ import {
 import { Prisma } from "../../../generated/prisma/client";
 
 import { ListOrdersQuery } from "../../validations/admin/order.validation";
-import { calculateCouponDiscountPortion } from "../../utils/order-amount.util";
+import { calculateCancellationAmounts, sumGrossCancelled, } from "../../utils/order-amount.util";
 import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
+import { issueRefundAfterCancellation, issueRefundForOrder, RefundOutcome, } from "../refund.service";
 
 
 const ORDER_STATUS_TRANSITIONS: Record<
@@ -492,7 +493,7 @@ export const updateOrderStatus = async (
     // ========================================================
 
     try {
-        return await prisma.$transaction(
+        await prisma.$transaction(
             async (tx) => {
                 // ------------------------------------------------
                 // Read current order inside transaction
@@ -510,12 +511,14 @@ export const updateOrderStatus = async (
 
                             subtotal: true,
                             couponDiscount: true,
+                            cancelledAmount: true,
 
                             items: {
                                 select: {
                                     id: true,
                                     price: true,
                                     remainingQuantity: true,
+                                    cancelledQuantity: true,
                                     productVariantId: true,
                                 },
                             },
@@ -595,33 +598,36 @@ export const updateOrderStatus = async (
                 // Calculate cancellation amount
                 // ------------------------------------------------
 
-                let cancellationAmount =
+                let grossCancelledNow =
                     new Prisma.Decimal(0);
 
                 for (const item of activeItems) {
-                    const quantity =
-                        item.remainingQuantity;
-
-                    const itemAmount =
-                        item.price.mul(quantity);
-
-                    cancellationAmount =
-                        cancellationAmount.add(
-                            itemAmount
+                    grossCancelledNow =
+                        grossCancelledNow.add(
+                            item.price.mul(
+                                item.remainingQuantity
+                            )
                         );
                 }
 
-                const couponDiscountPortion =
-                    calculateCouponDiscountPortion(
-                        order.subtotal,
-                        order.couponDiscount,
-                        cancellationAmount
-                    );
+                const {
+                    netCancellationAmount,
+                } = calculateCancellationAmounts({
+                    subtotal: order.subtotal,
 
-                const netCancellationAmount =
-                    cancellationAmount.sub(
-                        couponDiscountPortion
-                    );
+                    couponDiscount:
+                        order.couponDiscount,
+
+                    grossCancelledBefore:
+                        sumGrossCancelled(
+                            order.items
+                        ),
+
+                    netCancelledBefore:
+                        order.cancelledAmount,
+
+                    grossCancelledNow,
+                });
 
                 // ------------------------------------------------
                 // Cancel each active item
@@ -720,15 +726,6 @@ export const updateOrderStatus = async (
                 //
                 // Result:
                 //
-                // subtotal        = ₹2000
-                // couponDiscount  = ₹200
-                // total           = ₹1800
-                // cancelledAmount = ₹1000
-                //
-                // refundedAmount is NOT changed here.
-                //
-                // Refund should only increase refundedAmount
-                // after the actual refund succeeds.
                 // ------------------------------------------------
 
                 await tx.order.update({
@@ -745,21 +742,6 @@ export const updateOrderStatus = async (
 
                         cancelledAmount: {
                             increment:
-                                cancellationAmount,
-                        },
-
-                        subtotal: {
-                            decrement:
-                                cancellationAmount,
-                        },
-
-                        couponDiscount: {
-                            decrement:
-                                couponDiscountPortion,
-                        },
-
-                        total: {
-                            decrement:
                                 netCancellationAmount,
                         },
                     },
@@ -805,6 +787,12 @@ export const updateOrderStatus = async (
                 currentOrder?.status ===
                 OrderStatus.CANCELLED
             ) {
+                await issueRefundAfterCancellation(
+                    orderId,
+                    idempotencyKey,
+                    cleanReason
+                );
+
                 return prisma.order.findUniqueOrThrow({
                     where: {
                         id: orderId,
@@ -815,4 +803,62 @@ export const updateOrderStatus = async (
 
         throw err;
     }
+
+    await issueRefundAfterCancellation(
+        orderId,
+        idempotencyKey,
+        cleanReason
+    );
+
+    return prisma.order.findUniqueOrThrow({
+        where: {
+            id: orderId,
+        },
+    });
+};
+
+export const refundOrder = async (
+    orderId: number,
+    idempotencyKey: string,
+    reason?: string
+): Promise<{
+    order: Prisma.OrderGetPayload<{}>;
+    refund: RefundOutcome;
+}> => {
+    const order =
+        await prisma.order.findUnique({
+            where: {
+                id: orderId,
+            },
+
+            select: {
+                id: true,
+            },
+        });
+
+    if (!order) {
+        throw new AppError(
+            "Order not found",
+            404
+        );
+    }
+
+    const refund =
+        await issueRefundForOrder(
+            orderId,
+            idempotencyKey,
+            reason
+        );
+
+    return {
+        order: await prisma.order.findUniqueOrThrow(
+            {
+                where: {
+                    id: orderId,
+                },
+            }
+        ),
+
+        refund,
+    };
 };

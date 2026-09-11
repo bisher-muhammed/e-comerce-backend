@@ -309,12 +309,37 @@ expiresAt DateTime?
 
 items OrderItem[]
 couponClaim CouponClaim?
+refunds Refund[]
 
 createdAt DateTime @default(now())
 updatedAt DateTime @updatedAt
 
 @@index([userId])
 @@index([status, paymentStatus, expiresAt])
+}
+
+enum RefundStatus {
+PENDING
+PROCESSED
+FAILED
+}
+
+model Refund {
+id Int @id @default(autoincrement())
+orderId Int
+order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+amount Decimal @db.Decimal(10, 2)
+status RefundStatus @default(PENDING)
+razorpayPaymentId String
+razorpayRefundId String? @unique
+reason String?
+failureReason String?
+idempotencyKey String
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
+@@unique([orderId, idempotencyKey])
+@@index([orderId])
+@@index([status])
 }
 
 model OrderItem {

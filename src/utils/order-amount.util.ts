@@ -1,27 +1,92 @@
 import { Prisma } from "../../generated/prisma/client";
 
-export function calculateCouponDiscountPortion(
-    orderSubtotal: Prisma.Decimal,
-    orderCouponDiscount: Prisma.Decimal | null,
-    cancellationAmount: Prisma.Decimal
-): Prisma.Decimal {
+const ZERO = new Prisma.Decimal(0);
+
+export function calculateCancellationAmounts(params: {
+    subtotal: Prisma.Decimal;
+    couponDiscount: Prisma.Decimal | null;
+    grossCancelledBefore: Prisma.Decimal;
+    netCancelledBefore: Prisma.Decimal;
+    grossCancelledNow: Prisma.Decimal;
+}): {
+    couponDiscountPortion: Prisma.Decimal;
+    netCancellationAmount: Prisma.Decimal;
+} {
+    const {
+        subtotal,
+        couponDiscount,
+        grossCancelledBefore,
+        netCancelledBefore,
+        grossCancelledNow,
+    } = params;
+
+    const discount = couponDiscount ?? ZERO;
+
     if (
-        !orderCouponDiscount ||
-        orderCouponDiscount.lte(0) ||
-        orderSubtotal.lte(0) ||
-        cancellationAmount.lte(0)
+        discount.lte(0) ||
+        subtotal.lte(0) ||
+        grossCancelledNow.lte(0)
     ) {
-        return new Prisma.Decimal(0);
+        return {
+            couponDiscountPortion: ZERO,
+
+            netCancellationAmount:
+                grossCancelledNow,
+        };
     }
 
-    const portion = orderCouponDiscount
-        .mul(cancellationAmount)
-        .div(orderSubtotal)
-        .toDecimalPlaces(2);
+    const grossCancelledAfter =
+        grossCancelledBefore.add(
+            grossCancelledNow
+        );
 
-    // Never give back more discount than the order actually carries.
-    return Prisma.Decimal.min(
-        portion,
-        orderCouponDiscount
+    const discountAllocatedBefore =
+        grossCancelledBefore.sub(
+            netCancelledBefore
+        );
+
+    const discountAllocatedAfter =
+        grossCancelledAfter.gte(subtotal)
+            ? discount
+            : Prisma.Decimal.min(
+                  discount
+                      .mul(grossCancelledAfter)
+                      .div(subtotal)
+                      .toDecimalPlaces(2),
+                  discount
+              );
+
+    const couponDiscountPortion =
+        Prisma.Decimal.max(
+            discountAllocatedAfter.sub(
+                discountAllocatedBefore
+            ),
+            ZERO
+        );
+
+    return {
+        couponDiscountPortion,
+
+        netCancellationAmount:
+            grossCancelledNow.sub(
+                couponDiscountPortion
+            ),
+    };
+}
+
+export function sumGrossCancelled(
+    items: Array<{
+        price: Prisma.Decimal;
+        cancelledQuantity: number;
+    }>
+): Prisma.Decimal {
+    return items.reduce(
+        (sum, item) =>
+            sum.add(
+                item.price.mul(
+                    item.cancelledQuantity
+                )
+            ),
+        ZERO
     );
 }

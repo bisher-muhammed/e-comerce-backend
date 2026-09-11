@@ -7,6 +7,7 @@ import {
   listOrdersQuerySchema,
   orderIdParamSchema,
   updateOrderStatusBodySchema,
+  refundOrderBodySchema,
 } from "../../validations/admin/order.validation";
 
 const router = Router();
@@ -30,6 +31,13 @@ router.patch(
   validate({ params: orderIdParamSchema }),
   validate({ body: updateOrderStatusBodySchema }),
   orderController.updateOrderStatus
+);
+
+router.post(
+  "/:orderId/refund",
+  validate({ params: orderIdParamSchema }),
+  validate({ body: refundOrderBodySchema }),
+  orderController.refundOrder
 );
 
 export default router;

@@ -3,6 +3,7 @@ import {
   listOrdersQuerySchema,
   orderIdParamSchema,
   updateOrderStatusBodySchema,
+  refundOrderBodySchema,
 } from "../../validations/admin/order.validation";
 import * as orderService from "../../services/admin/order.service";
 
@@ -50,6 +51,26 @@ export const updateOrderStatus = async (req: Request, res: Response, next: NextF
     res.status(200).json({
       success: true,
       data: order,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const refundOrder = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { orderId } = orderIdParamSchema.parse(req.params);
+    const { idempotencyKey, reason } = refundOrderBodySchema.parse(req.body);
+
+    const { order, refund } = await orderService.refundOrder(
+      orderId,
+      idempotencyKey,
+      reason
+    );
+
+    res.status(refund.status === "FAILED" ? 502 : 200).json({
+      success: refund.status !== "FAILED",
+      data: { order, refund },
     });
   } catch (error) {
     next(error);

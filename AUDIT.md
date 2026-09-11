@@ -11,16 +11,6 @@
 ## 1. CRITICAL
 ## 2. HIGH
 
-### H4. No refund is ever issued — anywhere
-
-`grep -rn "refund" src/` → `refundedAmount` appears in two `select` blocks and one comment. It is **never written**. There is no `razorpay.payments.refund` call in the codebase.
-
-A customer can cancel a `CONFIRMED`, `paymentStatus: PAID`, online-paid order ([`customer/order.service.ts:307-315`](src/services/customer/order.service.ts#L307-L315) permits `CONFIRMED`) and the money is simply never returned. `paymentStatus` stays `PAID` while `total` goes to 0.
-
-Related: [`customer/order.service.ts:440-451`](src/services/customer/order.service.ts#L440-L451) increments `cancelledAmount` by the **gross** amount, not net of the coupon — so for a ₹1000 order with ₹200 discount (₹800 paid), `cancelledAmount` records **₹1000**. Any future refund driven off that field over-refunds ₹200 every time. It also zeroes `couponDiscount` while leaving `couponCode` set, destroying the record of what was actually charged.
-
-**Fix:** treat `subtotal`/`total`/`couponDiscount` as an immutable snapshot; record cancellations in `cancelledAmount` net of the discount; issue the Razorpay refund gated on a conditional update so a retry cannot double-credit.
-
 ### H5. Refresh tokens are not rotated or revocable, and there is no logout
 
 [`refresh.service.ts:11-52`](src/services/auth/refresh.service.ts#L11-L52) verifies the JWT and mints a new access token. It **never rotates** the refresh token and **never checks a server-side allowlist/denylist**. `grep -rn "clearCookie\|logout" src/` → **no match**: there is no logout endpoint at all.
@@ -184,7 +174,7 @@ This codebase gets several genuinely hard things right. Changing them would be a
 14. Set the connection pool `max` (M7) and add graceful shutdown (M8)
 15. Batch the transaction loops (H8)
 
-**Ongoing:** refund flow (H4), refresh-token rotation + logout (H5), Razorpay webhook (M5), Redis caching (M18).
+**Ongoing:** refresh-token rotation + logout (H5), Razorpay webhook (M5), Redis caching (M18).
 
 ---
 
