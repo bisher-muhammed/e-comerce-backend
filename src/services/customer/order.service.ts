@@ -4,6 +4,7 @@ import AppError from "../../errors/AppError";
 import { OrderStatus } from "../../../generated/prisma/enums";
 import { Prisma } from "../../../generated/prisma/client";
 import { calculateCouponDiscountPortion } from "../../utils/order-amount.util";
+import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
 import * as checkoutService from "./checkout.service";
 
 
@@ -423,6 +424,11 @@ export async function cancelOrder(
                     total: new Prisma.Decimal(0),
                 },
             });
+
+            await releaseCouponClaimForOrder(
+                tx,
+                orderId
+            );
         });
     } catch (err) {
 
@@ -681,6 +687,11 @@ export async function cancelOrderItem(
                                 new Prisma.Decimal(0),
                         },
                     });
+
+                    await releaseCouponClaimForOrder(
+                        tx,
+                        orderId
+                    );
                 } else {
 
 

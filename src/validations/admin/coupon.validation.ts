@@ -44,6 +44,14 @@ const maximumDiscountAmountSchema = z.union([
     .finite("Maximum discount amount must be a valid number"),
   z.null(),
 ]);
+
+const usageLimitSchema = z.union([
+  z.coerce
+    .number()
+    .int("Usage limit must be a whole number")
+    .positive("Usage limit must be greater than 0"),
+  z.null(),
+]);
 export const couponIdSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
@@ -60,6 +68,8 @@ export const createCouponSchema = z
     minimumOrderAmount: minimumOrderAmountSchema.default(0),
 
     maximumDiscountAmount: maximumDiscountAmountSchema.optional(),
+
+    usageLimit: usageLimitSchema.default(null),
 
     startsOn: z.coerce.date({
       message: "A valid start date is required",
@@ -129,6 +139,8 @@ export const updateCouponSchema = z
 
     maximumDiscountAmount:
       maximumDiscountAmountSchema.optional(),
+
+    usageLimit: usageLimitSchema.optional(),
 
     startsOn: z.coerce.date().optional(),
 

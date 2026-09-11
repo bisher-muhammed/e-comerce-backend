@@ -11,21 +11,6 @@
 ## 1. CRITICAL
 ## 2. HIGH
 
-### H3. Coupons: no usage limit exists, claims are burned and never released
-
-**No global limit is possible.** [`schema.prisma:370-393`](prisma/schema.prisma#L370-L393) — `Coupon` has no `usageLimit`, `usedCount`, `perUserLimit`, or `maxRedemptions`. The only cap is an implicit one-per-user from `@@unique([couponId, userId])`. "FLAT500, first 100 customers" is unimplementable; a budget-capped campaign has no server-side stop.
-
-**Claims are consumed before payment.** [`checkout.service.ts:829-839`](src/services/customer/checkout.service.ts#L829-L839) sets `usedAt` at PENDING-order creation. Three leaks follow:
-- Customer abandons the Razorpay modal → no sweeper exists (C4) → coupon burned forever.
-- Razorpay order creation fails → the rollback releases stock but **never touches `couponClaim`**.
-- Cancellation never releases it either — `grep -rn "couponClaim" src/` shows the only writers are `checkout.service.ts:658` and `:830`.
-
-Because of the unique constraint the customer cannot re-claim, and `deleteCoupon` refuses to delete a claimed coupon ([`admin/coupon.service.ts:637-643`](src/services/admin/coupon.service.ts#L637-L643)) — **no admin remedy exists**.
-
-**Redemption is a read-then-write.** [`checkout.service.ts:236-262`](src/services/customer/checkout.service.ts#L236-L262) reads `claim.usedAt`; `:657` / `:829` later write it with no `WHERE usedAt IS NULL` guard. It survives concurrency only incidentally, because same-user checkouts serialize on the cart row lock. Add a second redemption path (buy-now, admin-placed order, retry) and the guard vanishes.
-
-**Fix:** add `usageLimit`/`usedCount` consumed via conditional update; release the claim in the rollback, the sweeper, and every cancel path; make redemption `updateMany({ where: { id, usedAt: null } })` with a count assertion.
-
 ### H4. No refund is ever issued — anywhere
 
 `grep -rn "refund" src/` → `refundedAmount` appears in two `select` blocks and one comment. It is **never written**. There is no `razorpay.payments.refund` call in the codebase.
@@ -187,7 +172,6 @@ This codebase gets several genuinely hard things right. Changing them would be a
 4. Delete the duplicate `verifyPayment` (C3)
 5. Fix the negative-total arithmetic (C2)
 6. Write the expired-order sweeper (C4) — the transaction body already exists
-7. Release coupon claims on cancel/rollback/expiry (H3)
 
 **Then — security hardening:**
 8. `app.use(helmet())` and `express-rate-limit` (M1, H1) — an afternoon, very high value
@@ -207,6 +191,6 @@ This codebase gets several genuinely hard things right. Changing them would be a
 ## 7. Confidence notes
 
 - **Executed and verified:** `npx tsc --noEmit`, `npx prisma migrate status`, the `psql` table query, `node -e "require('node:stream/iter')"`, `npm audit`, and the git-history secret sweep. B1, B2, and H7 are reproduced facts.
-- **Verified by reading the exact source:** C1, C2, C3, C4, C5, H1, H3, H5, H6, M1, M2, M3. I opened each cited line and confirmed the quoted code.
+- **Verified by reading the exact source:** C1, C2, C3, C4, C5, H1, H5, H6, M1, M2, M3. I opened each cited line and confirmed the quoted code.
 - **Read from source, not executed:** the remaining MEDIUM/LOW items. The reasoning is traced through real code, but no integration test was run against them.
 - **Not assessed:** production deployment config, infrastructure, load behaviour under real traffic, and whether `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` differ in your deployed environment (M12's severity depends on that).

@@ -11,6 +11,7 @@ import { Prisma } from "../../../generated/prisma/client";
 
 import { ListOrdersQuery } from "../../validations/admin/order.validation";
 import { calculateCouponDiscountPortion } from "../../utils/order-amount.util";
+import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
 
 
 const ORDER_STATUS_TRANSITIONS: Record<
@@ -763,6 +764,11 @@ export const updateOrderStatus = async (
                         },
                     },
                 });
+
+                await releaseCouponClaimForOrder(
+                    tx,
+                    orderId
+                );
 
                 // ------------------------------------------------
                 // Return complete updated order

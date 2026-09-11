@@ -2,6 +2,8 @@ import prisma from "../../config/prisma";
 
 import { withTransactionRetry } from "../../utils/transaction-retry.util";
 
+import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
+
 const SWEEP_INTERVAL_MS = 60 * 1000;
 
 const SWEEP_BATCH_SIZE = 100;
@@ -83,17 +85,10 @@ async function releaseExpiredOrder(
           });
         }
 
-        await tx.couponClaim.updateMany({
-          where: {
-            orderId,
-          },
-
-          data: {
-            usedAt: null,
-
-            orderId: null,
-          },
-        });
+        await releaseCouponClaimForOrder(
+          tx,
+          orderId
+        );
 
         return true;
       },

@@ -382,6 +382,8 @@ startsOn DateTime @db.Date
 expiresOn DateTime @db.Date
 
 isActive Boolean @default(true)
+usageLimit Int?
+usedCount Int @default(0)
 
 claims CouponClaim[]
 

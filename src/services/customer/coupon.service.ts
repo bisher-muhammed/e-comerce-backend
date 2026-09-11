@@ -43,6 +43,16 @@ const isCouponCurrentlyValid = (
   );
 };
 
+const isCouponExhausted = (coupon: {
+  usageLimit: number | null;
+  usedCount: number;
+}): boolean => {
+  return (
+    coupon.usageLimit !== null &&
+    coupon.usedCount >= coupon.usageLimit
+  );
+};
+
 const calculateDiscount = (
   coupon: {
     discountType: "PERCENTAGE" | "FIXED";
@@ -155,6 +165,8 @@ export const getAvailableCoupons = async (
         startsOn: true,
         expiresOn: true,
         isActive: true,
+        usageLimit: true,
+        usedCount: true,
 
         claims: {
           where: {
@@ -199,6 +211,20 @@ export const getAvailableCoupons = async (
 
       isActive: coupon.isActive,
 
+      usageLimit: coupon.usageLimit,
+
+      remainingUses:
+        coupon.usageLimit !== null
+          ? Math.max(
+              coupon.usageLimit -
+                coupon.usedCount,
+              0
+            )
+          : null,
+
+      isExhausted:
+        isCouponExhausted(coupon),
+
       isClaimed: claim !== null,
 
       claim: claim
@@ -240,6 +266,8 @@ export const validateCoupon = async (
         startsOn: true,
         expiresOn: true,
         isActive: true,
+        usageLimit: true,
+        usedCount: true,
       },
     });
 
@@ -298,6 +326,14 @@ export const validateCoupon = async (
     throw new AppError(
       "You have already used this coupon",
       400
+    );
+  }
+
+
+  if (isCouponExhausted(coupon)) {
+    throw new AppError(
+      "This coupon has reached its usage limit",
+      409
     );
   }
 
@@ -379,6 +415,8 @@ export const claimCoupon = async (
         startsOn: true,
         expiresOn: true,
         isActive: true,
+        usageLimit: true,
+        usedCount: true,
       },
     });
 
@@ -401,6 +439,14 @@ export const claimCoupon = async (
     throw new AppError(
       "Coupon is not currently valid",
       400
+    );
+  }
+
+
+  if (isCouponExhausted(coupon)) {
+    throw new AppError(
+      "This coupon has reached its usage limit",
+      409
     );
   }
 

@@ -15,6 +15,11 @@ import {
   isUniqueConstraintOn,
 } from "../../utils/transaction-retry.util";
 
+import {
+  consumeCouponClaim,
+  releaseCouponClaimForOrder,
+} from "../../utils/coupon-redemption.util";
+
 // ============================================================
 // RAZORPAY
 // ============================================================
@@ -174,6 +179,7 @@ async function getCheckoutCoupon(
 ): Promise<{
   couponCode: string | null;
   couponDiscount: number;
+  couponId: number | null;
   couponClaimId: number | null;
 }> {
   /*
@@ -183,6 +189,7 @@ async function getCheckoutCoupon(
     return {
       couponCode: null,
       couponDiscount: 0,
+      couponId: null,
       couponClaimId: null,
     };
   }
@@ -205,6 +212,8 @@ async function getCheckoutCoupon(
         discountValue: true,
         minimumOrderAmount: true,
         maximumDiscountAmount: true,
+        usageLimit: true,
+        usedCount: true,
       },
     });
 
@@ -261,6 +270,16 @@ async function getCheckoutCoupon(
     );
   }
 
+  if (
+    coupon.usageLimit !== null &&
+    coupon.usedCount >= coupon.usageLimit
+  ) {
+    throw new AppError(
+      "This coupon has reached its usage limit",
+      409
+    );
+  }
+
   const couponDiscount =
     calculateCouponDiscount(
       coupon,
@@ -270,6 +289,7 @@ async function getCheckoutCoupon(
   return {
     couponCode: coupon.code,
     couponDiscount,
+    couponId: coupon.id,
     couponClaimId: claim.id,
   };
 }
@@ -654,15 +674,16 @@ async function runCodCheckout(
     });
 
 
-  if (coupon.couponClaimId !== null) {
-    await tx.couponClaim.update({
-      where: {
-        id: coupon.couponClaimId,
-      },
-      data: {
-        usedAt: new Date(),
-        orderId: order.id,
-      },
+  if (
+    coupon.couponClaimId !== null &&
+    coupon.couponId !== null
+  ) {
+    await consumeCouponClaim(tx, {
+      claimId: coupon.couponClaimId,
+
+      couponId: coupon.couponId,
+
+      orderId: order.id,
     });
   }
 
@@ -826,15 +847,16 @@ async function runOnlinePendingOrderCreation(
     });
 
 
-  if (coupon.couponClaimId !== null) {
-    await tx.couponClaim.update({
-      where: {
-        id: coupon.couponClaimId,
-      },
-      data: {
-        usedAt: new Date(),
-        orderId: order.id,
-      },
+  if (
+    coupon.couponClaimId !== null &&
+    coupon.couponId !== null
+  ) {
+    await consumeCouponClaim(tx, {
+      claimId: coupon.couponClaimId,
+
+      couponId: coupon.couponId,
+
+      orderId: order.id,
     });
   }
 
@@ -1042,6 +1064,11 @@ async function runOnlineCheckout(
                 item.quantity
               );
             }
+
+            await releaseCouponClaimForOrder(
+              tx,
+              order.id
+            );
 
             await tx.order.update({
               where: {

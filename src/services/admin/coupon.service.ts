@@ -77,6 +77,8 @@ export const createCoupon = async (
         maximumDiscountAmount:
           data.maximumDiscountAmount ?? null,
 
+        usageLimit: data.usageLimit,
+
         startsOn: data.startsOn,
         expiresOn: data.expiresOn,
 
@@ -412,6 +414,18 @@ export const updateCoupon = async (
   }
 
 
+  if (
+    data.usageLimit !== undefined &&
+    data.usageLimit !== null &&
+    data.usageLimit <
+      existingCoupon.usedCount
+  ) {
+    throw new AppError(
+      `Usage limit cannot be lower than the ${existingCoupon.usedCount} redemption(s) already made`,
+      400
+    );
+  }
+
   const finalDiscountType =
     data.discountType ??
     existingCoupon.discountType;
@@ -504,6 +518,11 @@ export const updateCoupon = async (
   ) {
     updateData.maximumDiscountAmount =
       data.maximumDiscountAmount;
+  }
+
+  if (data.usageLimit !== undefined) {
+    updateData.usageLimit =
+      data.usageLimit;
   }
 
   if (data.startsOn !== undefined) {
