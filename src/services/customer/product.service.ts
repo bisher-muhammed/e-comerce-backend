@@ -1,39 +1,87 @@
 import prisma from "../../config/prisma";
 
-export const getProducts = async () => {
-  return prisma.product.findMany({
-    where: {
+import { Prisma } from "../../../generated/prisma/client";
+
+import { ListProductsQuery } from "../../validations/customer/product.validation";
+
+export const getProducts = async (
+  query: ListProductsQuery
+) => {
+  const { page, limit, categoryId } =
+    query;
+
+  const where: Prisma.ProductWhereInput = {
+    isActive: true,
+
+    category: {
       isActive: true,
-      category: {
-        isActive: true,
-      },
     },
-    include: {
-      category: true,
 
-      colors: {
+    ...(categoryId !== undefined && {
+      categoryId,
+    }),
+  };
+
+  const [products, total] =
+    await prisma.$transaction([
+      prisma.product.findMany({
+        where,
+
         include: {
-          color: true,
+          category: true,
 
-          images: {
-            orderBy: {
-              sortOrder: "asc",
-            },
-          },
-
-          variants: {
+          colors: {
             include: {
-              size: true,
+              color: true,
+
+              images: {
+                orderBy: {
+                  sortOrder: "asc",
+                },
+              },
+
+              variants: {
+                include: {
+                  size: true,
+                },
+              },
             },
           },
         },
-      },
-    },
 
-    orderBy: {
-      createdAt: "desc",
+        orderBy: {
+          createdAt: "desc",
+        },
+
+        skip: (page - 1) * limit,
+
+        take: limit,
+      }),
+
+      prisma.product.count({
+        where,
+      }),
+    ]);
+
+  const totalPages = Math.max(
+    Math.ceil(total / limit),
+    1
+  );
+
+  return {
+    products,
+
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+
+      hasNextPage: page < totalPages,
+
+      hasPreviousPage: page > 1,
     },
-  });
+  };
 };
 
 export const getProductBySlug = async (slug: string) => {

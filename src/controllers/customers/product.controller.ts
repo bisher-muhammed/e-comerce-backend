@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 
 import { getProducts,getProductBySlug } from "../../services/customer/product.service";
+import { listProductsQuerySchema } from "../../validations/customer/product.validation";
 import AppError from "../../errors/AppError";
 
 export const getProductController = async (
@@ -9,11 +10,18 @@ export const getProductController = async (
   next: NextFunction
 ) => {
   try {
-    const products = await getProducts();
+    const query =
+      listProductsQuerySchema.parse(
+        req.query
+      );
+
+    const { products, pagination } =
+      await getProducts(query);
 
     return res.status(200).json({
       success: true,
       data: products,
+      pagination,
     });
   } catch (error) {
     next(error);

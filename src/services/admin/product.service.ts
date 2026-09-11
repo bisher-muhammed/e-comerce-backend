@@ -1,6 +1,7 @@
 import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
 import { deleteImageFromStorage } from "./image.service";
+import { ListProductsQuery } from "../../validations/product.validation";
 
 export type ProductImageInput =
   | {
@@ -458,11 +459,36 @@ export const createProduct = async (data: CreateProductInput) => {
   }
 };
 
-export const listProducts = async () => {
-  return prisma.product.findMany({
-    orderBy: { createdAt: "desc" },
-    include: productInclude,
-  });
+export const listProducts = async (
+  query: ListProductsQuery
+) => {
+  const { page, limit } = query;
+
+  const [products, total] = await prisma.$transaction([
+    prisma.product.findMany({
+      orderBy: { createdAt: "desc" },
+      include: productInclude,
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+
+    prisma.product.count(),
+  ]);
+
+  const totalPages = Math.max(Math.ceil(total / limit), 1);
+
+  return {
+    products,
+
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPreviousPage: page > 1,
+    },
+  };
 };
 
 export const getProductById = async (id: number) => {

@@ -25,6 +25,7 @@ import {
   createProductSchema,
   updateProductSchema,
   productIdSchema,
+  listProductsQuerySchema,
   type CreateProductImage,
   type UpdateProductImage,
 } from "../validations/product.validation";
@@ -249,11 +250,18 @@ export const list = async (
   next: NextFunction
 ) => {
   try {
-    const products = await listProducts();
+    const query =
+      listProductsQuerySchema.parse(
+        req.query
+      );
+
+    const { products, pagination } =
+      await listProducts(query);
 
     return res.status(200).json({
       success: true,
       data: products,
+      pagination,
     });
   } catch (error) {
     next(error);

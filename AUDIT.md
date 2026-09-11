@@ -11,15 +11,6 @@
 ## 1. CRITICAL
 
 
-### C4. Denial-of-inventory — reserved stock is never released
-
-[`checkout.service.ts:768-781`](src/services/customer/checkout.service.ts#L768-L781) reserves stock and sets `expiresAt`. A code comment references `checkout-cleanup.service.ts` — **that file does not exist**. `grep -rn "setInterval\|node-cron\|cron\." src/` returns nothing. `expiresAt` is only ever *read*.
-
-The composite index `@@index([status, paymentStatus, expiresAt])` exists in the schema, built for a sweeper that was never written.
-
-**Exploit:** an authenticated user loops `POST /customer/checkout` with `paymentMethod: "ONLINE"` and never pays. Each call permanently decrements `ProductVariant.stock`. Combined with H1 (no rate limiting), the entire catalogue can be driven to zero stock in seconds. Products show "out of stock" having sold nothing.
-
-**Fix:** a scheduled job over `status=PENDING, paymentStatus=PENDING, expiresAt < now()` that restocks items, releases the `CouponClaim`, and sets `CANCELLED`. The transaction body already exists at [`checkout.service.ts:1010-1065`](src/services/customer/checkout.service.ts#L1010-L1065) (the Razorpay-failure rollback) — it just needs a scheduler.
 
 ### C5. Product listing returns the entire catalogue, unpaginated
 

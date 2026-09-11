@@ -14,6 +14,7 @@ import {
 
 import {
   productIdSchema,
+  listProductsQuerySchema,
 } from "../validations/product.validation";
 
 import {
@@ -36,6 +37,9 @@ router.post(
 
 router.get(
   "/",
+  validate({
+    query: listProductsQuerySchema,
+  }),
   list
 );
 
