@@ -8,35 +8,8 @@
 ---
 
 ## 0. Blockers — broken right now
-
-
-
 ## 1. CRITICAL
 
-
-
-### C3. Payment state-machine bypass — a cancelled order can be flipped to PAID
-
-There are **two** payment-verification endpoints. Both verify the signature correctly, but the second is missing the guards the first has.
-
-| Guard | `checkout.service.ts` | `order.service.ts:907-1050` |
-|---|---|---|
-| already-`PAID` → idempotent return | ✅ `:1245` | ✅ `:929` |
-| `status !== "PENDING"` → reject | ✅ `:1252` | ❌ **absent** |
-| `expiresAt` expired → reject | ✅ `:1262` | ❌ **absent** |
-| re-checks guards inside the tx | ✅ `:1334` | ❌ only `paymentStatus` |
-
-[`customer/order.service.ts:1002-1046`](src/services/customer/order.service.ts#L1002-L1046) unconditionally writes `paymentStatus: "PAID", status: "CONFIRMED"`.
-
-**Exploit:**
-1. Create an ONLINE checkout → `PENDING`, stock reserved, `expiresAt = now+15min`.
-2. `PATCH /customer/orders/:id/cancel` → restocks every item, sets `CANCELLED`, and **zeroes** `subtotal`, `couponDiscount`, `total`.
-3. Complete the Razorpay payment (the Razorpay order still exists) and POST the genuine payment id + signature to `/orders/:id/verify-payment`.
-4. Order flips **CANCELLED → CONFIRMED + PAID with `total = 0`** — a confirmed zero-value order in the fulfilment queue, inventory double-counted.
-
-The same route also bypasses the 15-minute payment window entirely.
-
-**Fix:** delete `order.service.ts:907-1050` and its route; point `/verify-payment` at the hardened `checkout.service.verifyPayment`. Two implementations of payment verification is the root cause.
 
 ### C4. Denial-of-inventory — reserved stock is never released
 
