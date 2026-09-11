@@ -1,6 +1,9 @@
 import type { CookieOptions } from "express";
+import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS, } from "./jwt";
 
 const cookieDomain = process.env.COOKIE_DOMAIN;
+
+export const REFRESH_TOKEN_COOKIE_PATH = "/api/v1/auth";
 
 const baseCookieOptions: CookieOptions = {
     httpOnly: true,
@@ -11,14 +14,27 @@ const baseCookieOptions: CookieOptions = {
 
 export const accessTokenCookieOptions: CookieOptions = {
     ...baseCookieOptions,
-    maxAge: 15 * 60 * 1000, // 15 minutes
+    path: "/",
+    maxAge: ACCESS_TOKEN_TTL_SECONDS * 1000,
 };
 
 export const refreshTokenCookieOptions: CookieOptions = {
     ...baseCookieOptions,
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    path: REFRESH_TOKEN_COOKIE_PATH,
+    maxAge: REFRESH_TOKEN_TTL_SECONDS * 1000,
 };
 
-export const clearAuthCookieOptions: CookieOptions = {
+export const clearAccessTokenCookieOptions: CookieOptions = {
     ...baseCookieOptions,
+    path: "/",
+};
+
+export const clearRefreshTokenCookieOptions: CookieOptions = {
+    ...baseCookieOptions,
+    path: REFRESH_TOKEN_COOKIE_PATH,
+};
+
+export const clearLegacyRefreshTokenCookieOptions: CookieOptions = {
+    ...baseCookieOptions,
+    path: "/",
 };

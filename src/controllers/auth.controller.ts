@@ -8,7 +8,7 @@ import { refreshAccessToken } from "../services/auth/refresh.service";
 import { logoutUser } from "../services/auth/logout.service";
 import prisma from "../config/prisma";
 import AppError from "../errors/AppError";
-import { accessTokenCookieOptions, clearAuthCookieOptions, refreshTokenCookieOptions, } from "../utils/auth-cookie.util";
+import { accessTokenCookieOptions, clearAccessTokenCookieOptions, clearLegacyRefreshTokenCookieOptions, clearRefreshTokenCookieOptions, refreshTokenCookieOptions, } from "../utils/auth-cookie.util";
 
 
 export const register = async (
@@ -113,12 +113,17 @@ export const logout = async (
   try {
     res.clearCookie(
       "access_token",
-      clearAuthCookieOptions
+      clearAccessTokenCookieOptions
     );
 
     res.clearCookie(
       "refresh_token",
-      clearAuthCookieOptions
+      clearRefreshTokenCookieOptions
+    );
+
+    res.clearCookie(
+      "refresh_token",
+      clearLegacyRefreshTokenCookieOptions
     );
 
     // Cleared first so the browser is disarmed even if this fails

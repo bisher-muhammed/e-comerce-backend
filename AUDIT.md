@@ -11,19 +11,6 @@
 ## 1. CRITICAL
 ## 2. HIGH
 
-### H6. Session dies hourly — refresh cookie TTL contradicts the token TTL
-
-| Token | JWT lifetime | Cookie `maxAge` |
-|---|---|---|
-| access | 15m ([`jwt.ts:15`](src/utils/jwt.ts#L15)) | 15m ✓ |
-| **refresh** | **55m** ([`jwt.ts:23`](src/utils/jwt.ts#L23)) | **7 days** ✗ |
-
-The refresh JWT dies after 55 minutes while the browser holds the cookie for 7 days — users are hard logged out roughly hourly, and for the remaining ~7 days the browser keeps sending a token `/refresh-token` will always reject.
-
-Also: `sameSite: "lax"` with no `path` scoping means the refresh token is transmitted on **every** API request rather than only to the refresh endpoint, widening the theft surface.
-
-**Fix:** refresh TTL should comfortably exceed the access TTL (7d/15m is the usual pairing); add `path: "/api/v1/auth/refresh-token"`.
-
 ### H7. Dependency CVEs — 7 high severity
 
 ```

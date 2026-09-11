@@ -4,7 +4,8 @@ const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET!;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET!;
 
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
-export const REFRESH_TOKEN_TTL_SECONDS = 55 * 60;
+export const REFRESH_TOKEN_TTL_SECONDS =
+  7 * 24 * 60 * 60;
 
 export interface AccessTokenPayload {
   userId: number;
