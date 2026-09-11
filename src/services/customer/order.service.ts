@@ -1,11 +1,10 @@
-import crypto from "crypto";
-
 import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
 
 import { OrderStatus } from "../../../generated/prisma/enums";
 import { Prisma } from "../../../generated/prisma/client";
 import { calculateCouponDiscountPortion } from "../../utils/order-amount.util";
+import * as checkoutService from "./checkout.service";
 
 
 
@@ -890,6 +889,11 @@ export async function verifyPayment(
                 id: orderId,
                 userId,
             },
+
+            select: {
+                paymentMethod: true,
+                razorpayOrderId: true,
+            },
         });
 
     if (!order) {
@@ -898,15 +902,6 @@ export async function verifyPayment(
             404
         );
     }
-
-
-    if (
-        order.paymentStatus === "PAID"
-    ) {
-        return order;
-    }
-
-
 
     if (
         order.paymentMethod !== "ONLINE"
@@ -924,104 +919,10 @@ export async function verifyPayment(
         );
     }
 
-
-    const secret =
-        process.env.RAZORPAY_KEY_SECRET;
-
-    if (!secret) {
-        throw new AppError(
-            "Payment configuration error",
-            500
-        );
-    }
-
-
-    const generatedSignature =
-        crypto
-            .createHmac(
-                "sha256",
-                secret
-            )
-            .update(
-                `${order.razorpayOrderId}|${razorpayPaymentId}`
-            )
-            .digest("hex");
-
-    const generatedBuffer =
-        Buffer.from(
-            generatedSignature,
-            "utf8"
-        );
-
-    const receivedBuffer =
-        Buffer.from(
-            razorpaySignature,
-            "utf8"
-        );
-
-    if (
-        generatedBuffer.length !==
-            receivedBuffer.length ||
-        !crypto.timingSafeEqual(
-            generatedBuffer,
-            receivedBuffer
-        )
-    ) {
-        throw new AppError(
-            "Payment verification failed",
-            400
-        );
-    }
-
-    const updatedOrder =
-        await prisma.$transaction(
-            async (tx) => {
-                const currentOrder =
-                    await tx.order.findUnique({
-                        where: {
-                            id: orderId,
-                        },
-
-                        select: {
-                            id: true,
-                            paymentStatus: true,
-                        },
-                    });
-
-                if (!currentOrder) {
-                    throw new AppError(
-                        "Order not found",
-                        404
-                    );
-                }
-
-
-                if (
-                    currentOrder.paymentStatus ===
-                    "PAID"
-                ) {
-                    return tx.order.findUnique({
-                        where: {
-                            id: orderId,
-                        },
-                    });
-                }
-
-                return tx.order.update({
-                    where: {
-                        id: orderId,
-                    },
-
-                    data: {
-                        paymentStatus: "PAID",
-                        status: "CONFIRMED",
-
-                        razorpayPaymentId,
-                        razorpaySignature,
-                    },
-                });
-            }
-        );
-
-    return updatedOrder;
+    return checkoutService.verifyPayment(
+        userId,
+        order.razorpayOrderId,
+        razorpayPaymentId,
+        razorpaySignature
+    );
 }

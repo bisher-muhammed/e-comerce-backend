@@ -15,34 +15,6 @@
 
 
 
-### C2. Negative order totals when a coupon was used
-
-[`admin/order.service.ts:596-607`](src/services/admin/order.service.ts#L596-L607) sums the **gross** line amounts:
-
-```ts
-const itemAmount = item.price.mul(quantity);
-cancellationAmount = cancellationAmount.add(itemAmount);
-```
-
-then [`admin/order.service.ts:730-740`](src/services/admin/order.service.ts#L730-L740) subtracts that gross figure from both columns:
-
-```ts
-subtotal: { decrement: cancellationAmount },
-total:    { decrement: cancellationAmount },
-```
-
-But `total = subtotal − couponDiscount`.
-
-| | before | after |
-|---|---|---|
-| subtotal | ₹1000 | ₹0 ✓ |
-| couponDiscount | ₹200 | ₹200 (untouched) |
-| **total** | **₹800** | **−₹200** ✗ |
-
-The negative total flows into the admin order list and any revenue or refund report built on it.
-
-**The customer path already does this correctly** — [`customer/order.service.ts:660-671`](src/services/customer/order.service.ts#L660-L671) computes `netCancellationAmount` via `calculateCouponDiscountPortion`. **Fix:** use the same helper in the admin path and decrement `couponDiscount` proportionally.
-
 ### C3. Payment state-machine bypass — a cancelled order can be flipped to PAID
 
 There are **two** payment-verification endpoints. Both verify the signature correctly, but the second is missing the guards the first has.
