@@ -11,20 +11,6 @@
 ## 1. CRITICAL
 ## 2. HIGH
 
-### H7. Dependency CVEs — 7 high severity
-
-```
-multer         high  DoS via crafted multipart field names   ← you accept uploads
-nodemailer     high  resolveContent() bypasses disableFileAccess
-qs             mod   array-limit bypass
-fast-uri       high  host confusion via skipped IDN canonicalization
-deepmerge-ts   high  stack exhaustion on recursive object graphs
-@prisma/config high  (via deepmerge-ts)
-mysql2         high  auth plugin downgrade (transitive; unused)
-```
-
-`npm audit fix` clears most. `multer` matters most given the upload surface.
-
 ### H8. Product save does 3N round trips inside one transaction
 
 [`admin/product.service.ts:422-449`](src/services/admin/product.service.ts#L422-L449) and again at `:640-667`:
@@ -144,7 +130,6 @@ This codebase gets several genuinely hard things right. Changing them would be a
 8. `app.use(helmet())` and `express-rate-limit` (M1, H1) — an afternoon, very high value
 10. Strip token/OTP logging (M3)
 11. Generic production error messages (M2)
-12. `npm audit fix` (H7)
 
 **Then — performance:**
 13. Paginate the product listings (C5) + add `compression` (M9) — the two cheapest large wins

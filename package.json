@@ -24,8 +24,8 @@
     "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
-    "multer": "^2.2.0",
-    "nodemailer": "^9.0.5",
+    "multer": "^2.3.0",
+    "nodemailer": "^9.1.1",
     "pg": "^8.23.0",
     "rate-limit-redis": "^6.0.1",
     "razorpay": "^2.9.8",
@@ -43,5 +43,9 @@
     "prisma": "^7.9.1",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2",
+    "mysql2": "^3.24.4"
   }
 }
