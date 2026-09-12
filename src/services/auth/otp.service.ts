@@ -68,6 +68,12 @@ export const issueOtp = async (
     .randomInt(100000, 1000000)
     .toString();
 
+  await sendOtpEmail(
+    email,
+    otp,
+    OTP_TTL_SECONDS / 60
+  );
+
   const otpHash = await argon2.hash(otp);
 
   await redis.set(
@@ -87,13 +93,6 @@ export const issueOtp = async (
       EX: OTP_RESEND_COOLDOWN_SECONDS,
     }
   );
-
-  void sendOtpEmail(email, otp).catch((error) => {
-    console.error(
-      `Failed to deliver the verification code to ${email}`,
-      error
-    );
-  });
 
   if (process.env.NODE_ENV !== "production") {
     console.log(`OTP for ${email}: ${otp}`);
@@ -159,6 +158,12 @@ export const spendOtpResend = async (
       429
     );
   }
+};
+
+export const refundOtpResend = async (
+  registrationToken: string
+) => {
+  await redis.decr(resendsKey(registrationToken));
 };
 
 // ------------------------------------------------------------
