@@ -160,6 +160,12 @@ export const spendOtpResend = async (
   }
 };
 
+export const refundOtpResend = async (
+  registrationToken: string
+) => {
+  await redis.decr(resendsKey(registrationToken));
+};
+
 // ------------------------------------------------------------
 // END THE SESSION
 // ------------------------------------------------------------
