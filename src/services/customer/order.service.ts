@@ -5,6 +5,7 @@ import { OrderStatus } from "../../../generated/prisma/enums";
 import { Prisma } from "../../../generated/prisma/client";
 import { calculateCancellationAmounts, sumGrossCancelled, } from "../../utils/order-amount.util";
 import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
+import { cancelOrderItems } from "../../utils/order-cancellation.util";
 import { issueRefundAfterCancellation } from "../refund.service";
 import * as checkoutService from "./checkout.service";
 
@@ -379,66 +380,21 @@ export async function cancelOrder(
             });
 
 
-            for (const item of activeItems) {
-                const quantity =
-                    item.remainingQuantity;
+            // --------------------------------------------
+            // Record the actions, draw down the quantities
+            // and restock — 3 round trips for the whole
+            // order rather than 3 per item.
+            // --------------------------------------------
 
-                // --------------------------------------------
-                // Record cancellation action
-                // --------------------------------------------
+            await cancelOrderItems(tx, {
+                orderId,
 
-                await tx.orderItemAction.create({
-                    data: {
-                        orderItemId: item.id,
-                        type: "CANCEL",
-                        quantity,
-                        reason,
-                        idempotencyKey,
-                    },
-                });
+                items: activeItems,
 
+                reason,
 
-                const updated =
-                    await tx.orderItem.updateMany({
-                        where: {
-                            id: item.id,
-
-                            remainingQuantity: {
-                                gte: quantity,
-                            },
-                        },
-
-                        data: {
-                            remainingQuantity: {
-                                decrement: quantity,
-                            },
-
-                            cancelledQuantity: {
-                                increment: quantity,
-                            },
-                        },
-                    });
-
-                if (updated.count === 0) {
-                    throw new AppError(
-                        `Failed to cancel item ${item.id} — quantity changed concurrently`,
-                        409
-                    );
-                }
-
-
-                await tx.productVariant.update({
-                    where: {
-                        id: item.productVariantId,
-                    },
-
-                    data: {
-                        stock: {
-                            increment: quantity,
-                        },
-                    },
-                });
-            }
+                idempotencyKey,
+            });
 
 
 

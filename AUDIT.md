@@ -11,24 +11,6 @@
 ## 1. CRITICAL
 ## 2. HIGH
 
-### H8. Product save does 3N round trips inside one transaction
-
-[`admin/product.service.ts:422-449`](src/services/admin/product.service.ts#L422-L449) and again at `:640-667`:
-
-```ts
-for (const color of resolvedColors) {
-  const productColor = await tx.productColor.create({…});
-  await tx.productImage.createMany({…});
-  await tx.productVariant.createMany({…});
-}
-```
-
-8 colours = 24 sequential round trips holding a transaction and a pooled connection. At 15ms RTT on a managed DB that's 360ms of connection-hold per save.
-
-The same shape appears in the checkout stock loop ([`checkout.service.ts:212,284`](src/services/customer/checkout.service.ts#L212)) — N round trips **while holding a Serializable transaction and a `SELECT … FOR UPDATE` row lock on `Cart`**. The lock window scales linearly with cart size; this is the single biggest contributor to P2034 serialization failures and pool exhaustion under load. Cancellation paths do 3 queries per item (a 20-item order = 60 round trips).
-
-**Fix:** `createManyAndReturn` for colours; one `UPDATE … FROM (VALUES …)` for the stock batch; `createMany` for the cancellation actions.
-
 ### H9. Order search does a full sequential scan
 
 [`customer/order.service.ts:115`](src/services/customer/order.service.ts#L115)
@@ -53,7 +35,7 @@ The same shape appears in the checkout stock loop ([`checkout.service.ts:212,284
 | M4 | **`PATCH /admin/customers/:id/status` has zero body validation.** `const { status } = req.body` goes straight into `prisma.user.update`. A `listCustomersSchema` exists but no `updateCustomerStatusSchema`. Not privilege escalation (only `status` is written) but it's the one mutating route with no validation. | [`admin/customer.route.ts:36-41`](src/routes/admin/customer.route.ts#L36-L41) |
 | M5 | **No Razorpay webhook.** `grep -rni "webhook" src/` → nothing. Payment state depends entirely on the browser calling back. User closes the tab after paying → money captured at Razorpay, order `PENDING` forever. No reconciliation for later refunds or disputes. | (missing) |
 | M6 | **Payment accepted without confirming capture.** Signature is validated but `razorpay.payments.fetch()` is never called. If the account isn't on auto-capture, a payment can be `authorized` but never `captured` — signature still valid, DB records `PAID`, authorization voids in ~5 days. You ship for money never collected. | [`checkout.service.ts:1273`](src/services/customer/checkout.service.ts#L1273) |
-| M7 | **Default 10-connection pool.** `new PrismaPg({ connectionString })` with no `max`. `pg.Pool` defaults to 10. Each checkout holds one for a Serializable transaction spanning N round trips (H8) — ~10 concurrent checkouts and everything else queues then fails with P2024. | [`config/prisma.ts:5-11`](src/config/prisma.ts#L5-L11) |
+| M7 | **Default 10-connection pool.** `new PrismaPg({ connectionString })` with no `max`. `pg.Pool` defaults to 10. Each checkout holds one for the duration of a Serializable transaction — ~10 concurrent checkouts and everything else queues then fails with P2024. | [`config/prisma.ts:5-11`](src/config/prisma.ts#L5-L11) |
 | M8 | **No graceful shutdown.** No `SIGTERM`/`SIGINT` handler, no `$disconnect()`, and `app.listen`'s return value isn't even captured. Rolling deploys kill in-flight transactions and orphan DB backends. | [`server.ts`](src/server.ts) |
 | M9 | **No compression.** Not in `package.json`. Given C5's multi-MB payloads, gzip is the cheapest single win available. | [`app.ts`](src/app.ts) |
 | M10 | **Uploads buffer ~1 GB in RAM.** `memoryStorage()` with `files: 200` × `fileSize: 5MB`, all held simultaneously then uploaded concurrently. Two concurrent admin requests OOM the process. MIME type is also taken from the client-supplied header with no magic-byte check. | [`upload.middleware.ts:16,42-45`](src/middlewares/upload.middleware.ts#L16) |
@@ -76,7 +58,7 @@ The same shape appears in the checkout stock loop ([`checkout.service.ts:212,284
 - **`OrderItem.productVariantId` has no index** — the FK uses `onDelete: Restrict`, so every variant delete/update sequentially scans `OrderItem`. The one genuinely missing FK index.
 - **Order/product listing sorts on unindexed columns** — `@@index([userId])` then sorts the whole matched set per page. Wants `@@index([userId, createdAt])`; `Product.createdAt` has no index at all.
 - **`validate` middleware discards coerced params/query** — the `body` branch writes `req.body = result.data`, the `params` and `query` branches throw `result.data` away. Controllers defensively re-parse, so Zod runs twice on those routes. A trap for anyone who trusts the middleware.
-- **Retry wrapper doesn't cover its own failure modes** — `RETRYABLE_CODES = ["P2034"]` only; `P2028` (tx timeout) and `P1017` (connection closed) are reachable given H8's round-trip loops.
+- **Retry wrapper doesn't cover its own failure modes** — `RETRYABLE_CODES = ["P2034"]` only; `P2028` (tx timeout) and `P1017` (connection closed) are both reachable from the checkout transaction.
 - **`isIdempotencyConflict` matches any P2002** — an unrelated unique violation inside the transaction is silently swallowed as "already cancelled". `isUniqueConstraintOn(err, "idempotencyKey")` already exists in `transaction-retry.util.ts:51`.
 - **Customer cancel transaction is weaker than checkout's** — reads the order outside the transaction then uses that stale array inside it; default Read Committed, no retry wrapper.
 - **`idempotencyKey` is globally unique, not per-user** — client-supplied, so adversarial key-squatting can block another user's checkout with an unexplainable 409. Wants `@@unique([userId, idempotencyKey])`.
@@ -134,7 +116,6 @@ This codebase gets several genuinely hard things right. Changing them would be a
 **Then — performance:**
 13. Paginate the product listings (C5) + add `compression` (M9) — the two cheapest large wins
 14. Set the connection pool `max` (M7) and add graceful shutdown (M8)
-15. Batch the transaction loops (H8)
 
 **Ongoing:** Razorpay webhook (M5), Redis caching (M18).
 

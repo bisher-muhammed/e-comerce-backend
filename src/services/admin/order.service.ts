@@ -12,6 +12,7 @@ import { Prisma } from "../../../generated/prisma/client";
 import { ListOrdersQuery } from "../../validations/admin/order.validation";
 import { calculateCancellationAmounts, sumGrossCancelled, } from "../../utils/order-amount.util";
 import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
+import { cancelOrderItems } from "../../utils/order-cancellation.util";
 import { issueRefundAfterCancellation, issueRefundForOrder, RefundOutcome, } from "../refund.service";
 
 
@@ -630,86 +631,23 @@ export const updateOrderStatus = async (
                 });
 
                 // ------------------------------------------------
-                // Cancel each active item
+                // Cancel the active items
+                //
+                // Record the actions, draw down the quantities and
+                // restock — three set-based statements for the
+                // whole order, not three per item. The transaction
+                // is Serializable and holds a pooled connection.
                 // ------------------------------------------------
 
-                for (const item of activeItems) {
-                    const quantity =
-                        item.remainingQuantity;
+                await cancelOrderItems(tx, {
+                    orderId,
 
-                    // --------------------------------------------
-                    // Record action
-                    // --------------------------------------------
+                    items: activeItems,
 
-                    await tx.orderItemAction.create({
-                        data: {
-                            orderItemId: item.id,
+                    reason: cleanReason,
 
-                            type: "CANCEL",
-
-                            quantity,
-
-                            reason: cleanReason,
-
-                            idempotencyKey,
-                        },
-                    });
-
-                    // --------------------------------------------
-                    // Atomic quantity update
-                    // --------------------------------------------
-
-                    const updatedItem =
-                        await tx.orderItem.updateMany({
-                            where: {
-                                id: item.id,
-
-                                orderId,
-
-                                remainingQuantity: {
-                                    gte: quantity,
-                                },
-                            },
-
-                            data: {
-                                remainingQuantity: {
-                                    decrement:
-                                        quantity,
-                                },
-
-                                cancelledQuantity: {
-                                    increment:
-                                        quantity,
-                                },
-                            },
-                        });
-
-                    if (
-                        updatedItem.count === 0
-                    ) {
-                        throw new AppError(
-                            `Failed to cancel item ${item.id} — quantity changed concurrently`,
-                            409
-                        );
-                    }
-
-                    // --------------------------------------------
-                    // Restore stock
-                    // --------------------------------------------
-
-                    await tx.productVariant.update({
-                        where: {
-                            id: item.productVariantId,
-                        },
-
-                        data: {
-                            stock: {
-                                increment:
-                                    quantity,
-                            },
-                        },
-                    });
-                }
+                    idempotencyKey,
+                });
 
                 // ------------------------------------------------
                 // Update order financial values

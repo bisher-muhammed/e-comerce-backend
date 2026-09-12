@@ -20,6 +20,11 @@ import {
   releaseCouponClaimForOrder,
 } from "../../utils/coupon-redemption.util";
 
+import {
+  reserveStockOrThrow,
+  releaseStock,
+} from "../../utils/stock.util";
+
 const ONLINE_PAYMENT_WINDOW_MS =
   15 * 60 * 1000;
 
@@ -366,56 +371,29 @@ function buildOrderItemsData(
   }));
 }
 
-async function reserveStockOrThrow(
-  tx: Pick<
-    TransactionClient,
-    "productVariant"
-  >,
-  productVariantId: number,
-  quantity: number,
-  productName: string
+function toStockMovements(
+  items: Array<{
+    productVariantId: number;
+    quantity: number;
+    productVariant: {
+      productColor: {
+        product: {
+          name: string;
+        };
+      };
+    };
+  }>
 ) {
-  const result =
-    await tx.productVariant.updateMany({
-      where: {
-        id: productVariantId,
-        stock: {
-          gte: quantity,
-        },
-      },
-      data: {
-        stock: {
-          decrement: quantity,
-        },
-      },
-    });
+  return items.map((item) => ({
+    productVariantId:
+      item.productVariantId,
 
-  if (result.count !== 1) {
-    throw new AppError(
-      `${productName} no longer has enough stock`,
-      409
-    );
-  }
-}
+    quantity: item.quantity,
 
-async function releaseStock(
-  tx: Pick<
-    TransactionClient,
-    "productVariant"
-  >,
-  productVariantId: number,
-  quantity: number
-) {
-  await tx.productVariant.update({
-    where: {
-      id: productVariantId,
-    },
-    data: {
-      stock: {
-        increment: quantity,
-      },
-    },
-  });
+    productName:
+      item.productVariant.productColor
+        .product.name,
+  }));
 }
 
 function calculateSubtotal(
@@ -484,12 +462,70 @@ function createShippingSnapshot(
 // IDEMPOTENCY
 // ============================================================
 
+type CheckoutRequest = {
+  paymentMethod:
+    | "COD"
+    | "ONLINE";
+  contactEmail: string;
+  contactPhone: string;
+  shippingSnapshot: ShippingSnapshot;
+  couponCode?: string;
+};
+
+function matchesCheckoutRequest(
+  order: ShippingSnapshot & {
+    paymentMethod: string;
+    contactEmail: string;
+    contactPhone: string;
+    couponCode: string | null;
+  },
+  request: CheckoutRequest
+): boolean {
+  if (
+    order.paymentMethod !==
+      request.paymentMethod ||
+    order.contactEmail !==
+      request.contactEmail ||
+    order.contactPhone !==
+      request.contactPhone
+  ) {
+    return false;
+  }
+
+  const requestCouponCode =
+    request.couponCode
+      ? normalizeCouponCode(
+          request.couponCode
+        )
+      : null;
+
+  if (
+    order.couponCode !==
+    requestCouponCode
+  ) {
+    return false;
+  }
+
+  const shippingFields = Object.keys(
+    request.shippingSnapshot
+  ) as Array<
+    keyof ShippingSnapshot
+  >;
+
+  return shippingFields.every(
+    (field) =>
+      order[field] ===
+      request.shippingSnapshot[field]
+  );
+}
+
 async function findOrderByIdempotencyKey(
   client:
     | TransactionClient
     | typeof prisma,
   idempotencyKey: string,
-  userId: number
+  userId: number,
+  request: CheckoutRequest
 ) {
   const existing =
     await client.order.findFirst({
@@ -506,11 +542,21 @@ async function findOrderByIdempotencyKey(
   }
 
   if (existing.userId !== userId) {
-    /*
-     * Never leak another user's order.
-     */
+
     throw new AppError(
       "Invalid request",
+      409
+    );
+  }
+
+  if (
+    !matchesCheckoutRequest(
+      existing,
+      request
+    )
+  ) {
+    throw new AppError(
+      "This checkout was already submitted with different details. Please refresh the page and try again.",
       409
     );
   }
@@ -566,16 +612,19 @@ async function runCodCheckout(
     );
 
   if (cart.items.length === 0) {
-    /*
-     * Another request using the same
-     * idempotency key may already have
-     * consumed the cart.
-     */
+
     const dup =
       await findOrderByIdempotencyKey(
         tx,
         idempotencyKey,
-        userId
+        userId,
+        {
+          paymentMethod: "COD",
+          contactEmail,
+          contactPhone,
+          shippingSnapshot,
+          couponCode,
+        }
       );
 
     if (dup) {
@@ -609,17 +658,14 @@ async function runCodCheckout(
   );
 
   /*
-   * Reserve stock.
+   * Reserve stock — one statement for the whole cart, so
+   * the Serializable transaction and the `Cart` row lock are
+   * held for a fixed number of round trips, not one per item.
    */
-  for (const item of cart.items) {
-    await reserveStockOrThrow(
-      tx,
-      item.productVariantId,
-      item.quantity,
-      item.productVariant.productColor
-        .product.name
-    );
-  }
+  await reserveStockOrThrow(
+    tx,
+    toStockMovements(cart.items)
+  );
 
 
   const order =
@@ -740,7 +786,14 @@ async function runOnlinePendingOrderCreation(
       await findOrderByIdempotencyKey(
         tx,
         idempotencyKey,
-        userId
+        userId,
+        {
+          paymentMethod: "ONLINE",
+          contactEmail,
+          contactPhone,
+          shippingSnapshot,
+          couponCode,
+        }
       );
 
     if (dup) {
@@ -775,17 +828,12 @@ async function runOnlinePendingOrderCreation(
   );
 
   /*
-   * Reserve stock.
+   * Reserve stock — see runCodCheckout.
    */
-  for (const item of cart.items) {
-    await reserveStockOrThrow(
-      tx,
-      item.productVariantId,
-      item.quantity,
-      item.productVariant.productColor
-        .product.name
-    );
-  }
+  await reserveStockOrThrow(
+    tx,
+    toStockMovements(cart.items)
+  );
 
   const expiresAt = new Date(
     Date.now() +
@@ -912,11 +960,21 @@ async function runOnlineCheckout(
     couponCode,
   } = params;
 
+  const checkoutRequest: CheckoutRequest =
+    {
+      paymentMethod: "ONLINE",
+      contactEmail,
+      contactPhone,
+      shippingSnapshot,
+      couponCode,
+    };
+
   const alreadyProcessed =
     await findOrderByIdempotencyKey(
       prisma,
       idempotencyKey,
-      userId
+      userId,
+      checkoutRequest
     );
 
   if (alreadyProcessed) {
@@ -972,7 +1030,8 @@ async function runOnlineCheckout(
         await findOrderByIdempotencyKey(
           prisma,
           idempotencyKey,
-          userId
+          userId,
+          checkoutRequest
         );
 
       if (dup) {
@@ -1048,13 +1107,15 @@ async function runOnlineCheckout(
               return;
             }
 
-            for (const item of order.items) {
-              await releaseStock(
-                tx,
-                item.productVariantId,
-                item.quantity
-              );
-            }
+            await releaseStock(
+              tx,
+              order.items.map((item) => ({
+                productVariantId:
+                  item.productVariantId,
+
+                quantity: item.quantity,
+              }))
+            );
 
             await releaseCouponClaimForOrder(
               tx,
@@ -1200,7 +1261,14 @@ export const createCheckout = async (
           await findOrderByIdempotencyKey(
             prisma,
             idempotencyKey,
-            userId
+            userId,
+            {
+              paymentMethod: "COD",
+              contactEmail,
+              contactPhone,
+              shippingSnapshot,
+              couponCode,
+            }
           );
 
         if (dup) {
