@@ -45,19 +45,9 @@ export const registerSchema = z.object({
 });
 
 export const verifyOtpSchema = z.object({
-  registrationToken: z
-    .string()
-    .min(1, "Registration token is required"),
-
   otp: z
     .string()
     .regex(/^\d{6}$/, "OTP must be a 6-digit number"),
-});
-
-export const resendOtpSchema = z.object({
-  registrationToken: z
-    .string()
-    .min(1, "Registration token is required"),
 });
 
 export const loginSchema = z.object({
@@ -77,8 +67,6 @@ export const loginSchema = z.object({
 export type RegisterInput = z.infer<typeof registerSchema>;
 
 export type VerifyOtpInput = z.infer<typeof verifyOtpSchema>;
-
-export type ResendOtpInput = z.infer<typeof resendOtpSchema>;
 
 export type LoginInput = z.infer<typeof loginSchema>;
 

@@ -6,6 +6,13 @@ import {
   removeWishlistItem,
 } from "../../services/customer/wishlist.service";
 
+import { validated } from "../../middlewares/validate.middleware";
+
+import type {
+  AddWishlistItemInput,
+  RemoveWishlistItemInput,
+} from "../../validations/customer/wishlist.validation";
+
 
 
 // GET /wishlist
@@ -31,7 +38,10 @@ export const addWishlistItemController = async (
 ) => {
   const userId = req.user!.id;
 
-  const { productId } = req.body;
+  const { productId } = validated<AddWishlistItemInput>(
+    req,
+    "body"
+  );
 
   const item = await addWishlistItem(
     userId,
@@ -53,7 +63,11 @@ export const removeWishlistItemController = async (
 ) => {
   const userId = req.user!.id;
 
-  const productId = Number(req.params.productId);
+  const { productId } =
+    validated<RemoveWishlistItemInput>(
+      req,
+      "params"
+    );
 
   await removeWishlistItem(
     userId,

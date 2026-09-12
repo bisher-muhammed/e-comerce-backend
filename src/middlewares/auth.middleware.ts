@@ -1,9 +1,9 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 
-import prisma from "../config/prisma";
 import AppError from "../errors/AppError";
 import { verifyAccessToken } from "../utils/jwt";
+import { loadAuthenticatedUser } from "../utils/auth-user-cache.util";
 
 export const authenticate = async (
   req: Request,
@@ -11,32 +11,19 @@ export const authenticate = async (
   next: NextFunction
 ) => {
   try {
-    
-    console.log("COOKIES:", req.cookies);
     const accessToken = req.cookies.access_token;
-    
 
     if (!accessToken) {
       throw new AppError("Authentication required", 401);
     }
 
-   
+
     const decoded = verifyAccessToken(accessToken);
 
-    
-    const user = await prisma.user.findUnique({
-      where: {
-        id: decoded.userId,
-      },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        status: true,
-      },
-    });
+
+    const user = await loadAuthenticatedUser(
+      decoded.userId
+    );
 
     if (!user) {
       throw new AppError("User not found", 401);
@@ -50,7 +37,7 @@ export const authenticate = async (
       );
     }
 
-   
+
     req.user = user;
 
     next();

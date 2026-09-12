@@ -1,8 +1,27 @@
 import { z } from "zod";
 
+import {
+    isValidDateInput,
+    toDayBoundary,
+} from "../../utils/date-range.util";
+
 // ============================================================
 // COMMON
 // ============================================================
+
+const dayBoundarySchema = (
+    edge: "start" | "end"
+) =>
+    z
+        .string()
+        .trim()
+        .min(1)
+        .refine(isValidDateInput, {
+            message: "Invalid date",
+        })
+        .transform((value) =>
+            toDayBoundary(value, edge)
+        );
 
 const idempotencyBodySchema = z.object({
     idempotencyKey: z
@@ -62,6 +81,7 @@ export const listOrdersSchema = z
             .enum([
                 "PENDING",
                 "CONFIRMED",
+                "SHIPPED",
                 "CANCELLED",
                 "DELIVERED",
             ])
@@ -78,9 +98,9 @@ export const listOrdersSchema = z
             .enum(["createdAt", "updatedAt"])
             .default("createdAt"),
 
-        startDate: z.coerce.date().optional(),
+        startDate: dayBoundarySchema("start").optional(),
 
-        endDate: z.coerce.date().optional(),
+        endDate: dayBoundarySchema("end").optional(),
     })
     .refine(
         (data) =>
@@ -171,3 +191,40 @@ export const verifyPaymentSchema = z.object({
             "Razorpay signature is required"
         ),
 });
+
+export const verifyPaymentBodySchema =
+    verifyPaymentSchema.omit({
+        orderId: true,
+    });
+
+export type OrderIdParam = z.infer<
+    typeof orderIdSchema
+>;
+
+export type OrderItemParams = z.infer<
+    typeof orderItemParamsSchema
+>;
+
+export type ListOrdersInput = z.infer<
+    typeof listOrdersSchema
+>;
+
+export type CancelOrderInput = z.infer<
+    typeof cancelOrderSchema
+>;
+
+export type CancelOrderItemInput = z.infer<
+    typeof cancelOrderItemSchema
+>;
+
+export type ReturnOrderItemInput = z.infer<
+    typeof returnOrderItemSchema
+>;
+
+export type VerifyPaymentInput = z.infer<
+    typeof verifyPaymentSchema
+>;
+
+export type VerifyPaymentBody = z.infer<
+    typeof verifyPaymentBodySchema
+>;

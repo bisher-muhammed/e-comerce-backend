@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+/.github/
 
 # Environment variables
 .env
@@ -36,3 +37,5 @@ Thumbs.db
 .agents/
 .claude/
 .windsurf/
+
+AUDIT.md

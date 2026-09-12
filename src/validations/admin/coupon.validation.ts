@@ -44,6 +44,14 @@ const maximumDiscountAmountSchema = z.union([
     .finite("Maximum discount amount must be a valid number"),
   z.null(),
 ]);
+
+const usageLimitSchema = z.union([
+  z.coerce
+    .number()
+    .int("Usage limit must be a whole number")
+    .positive("Usage limit must be greater than 0"),
+  z.null(),
+]);
 export const couponIdSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
@@ -60,6 +68,8 @@ export const createCouponSchema = z
     minimumOrderAmount: minimumOrderAmountSchema.default(0),
 
     maximumDiscountAmount: maximumDiscountAmountSchema.optional(),
+
+    usageLimit: usageLimitSchema.default(null),
 
     startsOn: z.coerce.date({
       message: "A valid start date is required",
@@ -101,17 +111,30 @@ export const createCouponSchema = z
         });
       }
     }
-    if (
-      data.discountType === "FIXED" &&
-      data.maximumDiscountAmount !== undefined &&
-      data.maximumDiscountAmount !== null
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "Maximum discount amount can only be used with percentage coupons",
-        path: ["maximumDiscountAmount"],
-      });
+    if (data.discountType === "FIXED") {
+      if (
+        data.maximumDiscountAmount !== undefined &&
+        data.maximumDiscountAmount !== null
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "Maximum discount amount can only be used with percentage coupons",
+          path: ["maximumDiscountAmount"],
+        });
+      }
+
+      if (
+        data.minimumOrderAmount <=
+        data.discountValue
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "Minimum order amount must be greater than the discount value for a fixed-amount coupon",
+          path: ["minimumOrderAmount"],
+        });
+      }
     }
   });
 
@@ -129,6 +152,8 @@ export const updateCouponSchema = z
 
     maximumDiscountAmount:
       maximumDiscountAmountSchema.optional(),
+
+    usageLimit: usageLimitSchema.optional(),
 
     startsOn: z.coerce.date().optional(),
 
@@ -248,6 +273,14 @@ export const listCouponsSchema = z
 
 export type CouponDiscountType = z.infer<
   typeof couponDiscountTypeSchema
+>;
+
+export type CouponIdParam = z.infer<
+  typeof couponIdSchema
+>;
+
+export type UpdateCouponStatusInput = z.infer<
+  typeof updateCouponStatusSchema
 >;
 
 export type CreateCouponInput = z.infer<

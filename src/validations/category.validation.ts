@@ -61,3 +61,7 @@ export type CreateCategoryInput = z.infer<
 export type UpdateCategoryInput = z.infer<
   typeof updateCategorySchema
 >;
+
+export type CategoryIdParam = z.infer<
+  typeof categoryIdSchema
+>;

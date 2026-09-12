@@ -281,6 +281,25 @@ export const productIdSchema = z.object({
 });
 
 
+
+export const listProductsQuerySchema = z.object({
+  page: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(1),
+
+  limit: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(100)
+    .default(20),
+});
+
+
+export type ProductIdParam = z.infer<typeof productIdSchema>;
+export type ListProductsQuery = z.infer<typeof listProductsQuerySchema>;
 export type CreateProductMetadata = z.infer<typeof createProductSchema>;
 export type UpdateProductMetadata = z.infer<typeof updateProductSchema>;
 export type CreateProductImage = z.infer<typeof createProductImageSchema>;

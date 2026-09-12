@@ -13,14 +13,16 @@ import {
     verifyPayment,
 } from "../../services/customer/order.service";
 
-import {
-    orderIdSchema,
-    orderItemParamsSchema,
-    listOrdersSchema,
-    cancelOrderSchema,
-    cancelOrderItemSchema,
-    returnOrderItemSchema,
-    verifyPaymentSchema,
+import { validated } from "../../middlewares/validate.middleware";
+
+import type {
+    OrderIdParam,
+    OrderItemParams,
+    ListOrdersInput,
+    CancelOrderInput,
+    CancelOrderItemInput,
+    ReturnOrderItemInput,
+    VerifyPaymentBody,
 } from "../../validations/customer/order.validation";
 
 // ============================================================
@@ -35,8 +37,9 @@ export async function getOrdersController(
     try {
         const userId = req.user!.id;
 
-        const q = listOrdersSchema.parse(
-            req.query
+        const q = validated<ListOrdersInput>(
+            req,
+            "query"
         );
 
         const orders =
@@ -75,7 +78,10 @@ export async function getOrderDetailsController(
         const userId = req.user!.id;
 
         const { orderId } =
-            orderIdSchema.parse(req.params);
+            validated<OrderIdParam>(
+                req,
+                "params"
+            );
 
         const order =
             await getOrderByIdForUser(
@@ -105,13 +111,17 @@ export async function cancelOrderController(
         const userId = req.user!.id;
 
         const { orderId } =
-            orderIdSchema.parse(req.params);
+            validated<OrderIdParam>(
+                req,
+                "params"
+            );
 
         const {
             idempotencyKey,
             reason,
-        } = cancelOrderSchema.parse(
-            req.body
+        } = validated<CancelOrderInput>(
+            req,
+            "body"
         );
 
         const order = await cancelOrder(
@@ -147,16 +157,18 @@ export async function cancelOrderItemController(
         const {
             orderId,
             itemId,
-        } = orderItemParamsSchema.parse(
-            req.params
+        } = validated<OrderItemParams>(
+            req,
+            "params"
         );
 
         const {
             quantity,
             idempotencyKey,
             reason,
-        } = cancelOrderItemSchema.parse(
-            req.body
+        } = validated<CancelOrderItemInput>(
+            req,
+            "body"
         );
 
         const item =
@@ -195,16 +207,18 @@ export async function returnOrderItemController(
         const {
             orderId,
             itemId,
-        } = orderItemParamsSchema.parse(
-            req.params
+        } = validated<OrderItemParams>(
+            req,
+            "params"
         );
 
         const {
             quantity,
             reason,
             idempotencyKey,
-        } = returnOrderItemSchema.parse(
-            req.body
+        } = validated<ReturnOrderItemInput>(
+            req,
+            "body"
         );
 
         const item =
@@ -240,19 +254,26 @@ export async function verifyPaymentController(
     try {
         const userId = req.user!.id;
 
-        const validatedData =
-            verifyPaymentSchema.parse({
-                ...req.body,
-                orderId:
-                    req.params.orderId,
-            });
+        const { orderId } =
+            validated<OrderIdParam>(
+                req,
+                "params"
+            );
+
+        const {
+            razorpayPaymentId,
+            razorpaySignature,
+        } = validated<VerifyPaymentBody>(
+            req,
+            "body"
+        );
 
         const order =
             await verifyPayment(
-                validatedData.orderId,
+                orderId,
                 userId,
-                validatedData.razorpayPaymentId,
-                validatedData.razorpaySignature
+                razorpayPaymentId,
+                razorpaySignature
             );
 
         res.status(200).json({

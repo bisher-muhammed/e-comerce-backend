@@ -37,6 +37,12 @@ export const validateCouponSchema = z.object({
 });
 
 
+export const validateCouponQuerySchema =
+  validateCouponSchema.pick({
+    subtotal: true,
+  });
+
+
 export const claimCouponSchema = z.object({});
 
 
@@ -46,6 +52,10 @@ export type CouponCodeParams = z.infer<
 
 export type ValidateCouponInput = z.infer<
   typeof validateCouponSchema
+>;
+
+export type ValidateCouponQuery = z.infer<
+  typeof validateCouponQuerySchema
 >;
 
 export type ClaimCouponInput = z.infer<

@@ -1,5 +1,11 @@
 import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
+import {
+  CATALOG_NAMESPACE,
+  CATALOG_TTL_SECONDS,
+  cached,
+  invalidateNamespace,
+} from "../../utils/cache.util";
 
 interface CreateCategoryInput {
   name: string;
@@ -35,7 +41,7 @@ export const createCategory = async (
     );
   }
 
-  return prisma.category.create({
+  const category = await prisma.category.create({
     data: {
       name: data.name,
       slug: data.slug,
@@ -43,14 +49,24 @@ export const createCategory = async (
       isActive: data.isActive ?? true,
     },
   });
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
+
+  return category;
 };
 
 export const listCategories = async () => {
-  return prisma.category.findMany({
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+  return cached(
+    CATALOG_NAMESPACE,
+    "categories:list",
+    CATALOG_TTL_SECONDS,
+    () =>
+      prisma.category.findMany({
+        orderBy: {
+          createdAt: "desc",
+        },
+      })
+  );
 };
 
 export const getCategoryById = async (
@@ -113,10 +129,14 @@ export const updateCategory = async (
     }
   }
 
-  return prisma.category.update({
+  const updated = await prisma.category.update({
     where: { id },
     data,
   });
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
+
+  return updated;
 };
 
 
@@ -142,12 +162,16 @@ export const blockCategory = async (
     );
   }
 
-  return prisma.category.update({
+  const blocked = await prisma.category.update({
     where: { id },
     data: {
       isActive: false,
     },
   });
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
+
+  return blocked;
 };
 
 
@@ -173,12 +197,16 @@ export const unblockCategory = async (
     );
   }
 
-  return prisma.category.update({
+  const unblocked = await prisma.category.update({
     where: { id },
     data: {
       isActive: true,
     },
   });
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
+
+  return unblocked;
 };
 
 
@@ -214,4 +242,6 @@ export const deleteCategory = async (
   await prisma.category.delete({
     where: { id },
   });
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
 };

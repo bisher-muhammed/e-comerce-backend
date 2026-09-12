@@ -9,7 +9,43 @@ import { Prisma } from "../../generated/prisma/client";
  * be retried by the application. If you don't retry this, users get a
  * raw 500 on checkout for no reason other than bad luck in timing.
  */
-const RETRYABLE_CODES = new Set(["P2034"]);
+const RETRYABLE_CODES = new Set([
+  "P2034",
+  "P2028",
+  "P1017",
+]);
+
+const RETRYABLE_POSTGRES_CODES = new Set([
+  "40001",
+  "40P01",
+]);
+
+export function isSerializationFailure(
+  error: Prisma.PrismaClientKnownRequestError
+): boolean {
+  const meta = (error.meta ?? {}) as Record<string, unknown>;
+
+  const cause = (
+    meta.driverAdapterError as
+      | {
+          cause?: {
+            kind?: unknown;
+            originalCode?: unknown;
+          };
+        }
+      | undefined
+  )?.cause;
+
+  if (cause?.kind === "TransactionWriteConflict") {
+    return true;
+  }
+
+  return [cause?.originalCode, meta.code].some(
+    (code) =>
+      typeof code === "string" &&
+      RETRYABLE_POSTGRES_CODES.has(code)
+  );
+}
 
 export async function withTransactionRetry<T>(
   fn: () => Promise<T>,
@@ -30,7 +66,9 @@ export async function withTransactionRetry<T>(
           ? (error as Prisma.PrismaClientKnownRequestError & { code: string })
           : undefined;
       const isRetryable =
-        prismaError != null && RETRYABLE_CODES.has(prismaError.code);
+        prismaError != null &&
+        (RETRYABLE_CODES.has(prismaError.code) ||
+          isSerializationFailure(prismaError));
 
       if (!isRetryable || attempt > maxRetries) {
         throw error;
@@ -42,6 +80,58 @@ export async function withTransactionRetry<T>(
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
+}
+
+function unquoteIdentifier(value: unknown): string {
+  return String(value)
+    .trim()
+    .replace(/^"(.*)"$/s, "$1");
+}
+
+export function violatedColumns(
+  error: Prisma.PrismaClientKnownRequestError
+): string[] {
+  const meta = (error.meta ?? {}) as Record<string, unknown>;
+
+  if (Array.isArray(meta.target)) {
+    return meta.target.map(unquoteIdentifier);
+  }
+
+  if (typeof meta.target === "string") {
+    return meta.target
+      .split(",")
+      .map(unquoteIdentifier);
+  }
+
+  const driverError = meta.driverAdapterError as
+    | {
+        cause?: {
+          constraint?: { fields?: unknown };
+          originalMessage?: unknown;
+        };
+      }
+    | undefined;
+
+  const fields = driverError?.cause?.constraint?.fields;
+
+  if (Array.isArray(fields)) {
+    return fields.map(unquoteIdentifier);
+  }
+
+  const originalMessage =
+    driverError?.cause?.originalMessage;
+
+  if (typeof originalMessage === "string") {
+    const constraintName = originalMessage.match(
+      /unique constraint "([^"]+)"/
+    )?.[1];
+
+    if (constraintName) {
+      return constraintName.split("_");
+    }
+  }
+
+  return [];
 }
 
 /**
@@ -60,7 +150,6 @@ export function isUniqueConstraintOn(
   return (
     prismaError != null &&
     prismaError.code === "P2002" &&
-    Array.isArray((prismaError.meta as any)?.target) &&
-    (prismaError.meta as any).target.includes(column)
+    violatedColumns(prismaError).includes(column)
   );
 }

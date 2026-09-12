@@ -1,5 +1,11 @@
 import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
+import {
+  CATALOG_NAMESPACE,
+  CATALOG_TTL_SECONDS,
+  cached,
+  invalidateNamespace,
+} from "../../utils/cache.util";
 
 interface CreateSizeInput {
   name: string;
@@ -42,20 +48,30 @@ export const createSize = async (
     );
   }
 
-  return prisma.size.create({
+  const size = await prisma.size.create({
     data: {
       name: data.name,
       sortOrder: data.sortOrder,
     },
   });
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
+
+  return size;
 };
 
 export const listSizes = async () => {
-  return prisma.size.findMany({
-    orderBy: {
-      sortOrder: "asc",
-    },
-  });
+  return cached(
+    CATALOG_NAMESPACE,
+    "sizes:list",
+    CATALOG_TTL_SECONDS,
+    () =>
+      prisma.size.findMany({
+        orderBy: {
+          sortOrder: "asc",
+        },
+      })
+  );
 };
 
 export const getSizeById = async (
@@ -132,12 +148,16 @@ export const updateSize = async (
     }
   }
 
-  return prisma.size.update({
+  const updated = await prisma.size.update({
     where: {
       id,
     },
     data,
   });
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
+
+  return updated;
 };
 
 export const deleteSize = async (
@@ -175,4 +195,6 @@ export const deleteSize = async (
       id,
     },
   });
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
 };

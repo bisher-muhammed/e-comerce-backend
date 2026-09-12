@@ -9,7 +9,7 @@ import {
     cancelOrderSchema,
     cancelOrderItemSchema,
     returnOrderItemSchema,
-    verifyPaymentSchema,
+    verifyPaymentBodySchema,
 } from "../../validations/customer/order.validation";
 
 import {
@@ -51,7 +51,7 @@ router.post(
 router.post(
     "/:orderId/verify-payment",
     authenticate,
-    validate({ params: orderIdSchema, body: verifyPaymentSchema }),
+    validate({ params: orderIdSchema, body: verifyPaymentBodySchema }),
     verifyPaymentController
 );
 

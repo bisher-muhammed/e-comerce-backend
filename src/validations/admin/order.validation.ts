@@ -113,3 +113,24 @@ export type UpdateOrderStatusBody =
     z.infer<
         typeof updateOrderStatusBodySchema
     >;
+
+export const refundOrderBodySchema =
+    z.object({
+        idempotencyKey: z
+            .string()
+            .trim()
+            .min(
+                1,
+                "idempotencyKey is required"
+            )
+            .max(100),
+
+        reason: z
+            .string()
+            .trim()
+            .max(500)
+            .optional(),
+    });
+
+export type RefundOrderBody =
+    z.infer<typeof refundOrderBodySchema>;
