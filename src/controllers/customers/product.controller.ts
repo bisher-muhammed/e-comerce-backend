@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 
 import { getProducts,getProductBySlug } from "../../services/customer/product.service";
-import { listProductsQuerySchema } from "../../validations/customer/product.validation";
+import { validated } from "../../middlewares/validate.middleware";
+import type { ListProductsQuery } from "../../validations/customer/product.validation";
 import AppError from "../../errors/AppError";
 
 export const getProductController = async (
@@ -11,8 +12,9 @@ export const getProductController = async (
 ) => {
   try {
     const query =
-      listProductsQuerySchema.parse(
-        req.query
+      validated<ListProductsQuery>(
+        req,
+        "query"
       );
 
     const { products, pagination } =

@@ -4,6 +4,8 @@ import { withTransactionRetry } from "../../utils/transaction-retry.util";
 
 import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
 
+import { releaseStock } from "../../utils/stock.util";
+
 const SWEEP_INTERVAL_MS = 60 * 1000;
 
 const SWEEP_BATCH_SIZE = 100;
@@ -70,20 +72,16 @@ async function releaseExpiredOrder(
             },
           });
 
-        for (const item of items) {
-          await tx.productVariant.update({
-            where: {
-              id: item.productVariantId,
-            },
+        await releaseStock(
+          tx,
+          items.map((item) => ({
+            productVariantId:
+              item.productVariantId,
 
-            data: {
-              stock: {
-                increment:
-                  item.remainingQuantity,
-              },
-            },
-          });
-        }
+            quantity:
+              item.remainingQuantity,
+          }))
+        );
 
         await releaseCouponClaimForOrder(
           tx,

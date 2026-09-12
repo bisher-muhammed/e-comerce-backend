@@ -1,15 +1,16 @@
 import { Request, Response, NextFunction } from "express";
-import {
-  listOrdersQuerySchema,
-  orderIdParamSchema,
-  updateOrderStatusBodySchema,
-  refundOrderBodySchema,
+import { validated } from "../../middlewares/validate.middleware";
+import type {
+  ListOrdersQuery,
+  OrderIdParam,
+  UpdateOrderStatusBody,
+  RefundOrderBody,
 } from "../../validations/admin/order.validation";
 import * as orderService from "../../services/admin/order.service";
 
 export const listOrders = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const query = listOrdersQuerySchema.parse(req.query);
+    const query = validated<ListOrdersQuery>(req, "query");
     const result = await orderService.listOrders(query);
 
     // Stays "orders" (plural) — matches OrderListResponse on the frontend.
@@ -24,7 +25,7 @@ export const listOrders = async (req: Request, res: Response, next: NextFunction
 
 export const getOrderDetails = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { orderId } = orderIdParamSchema.parse(req.params);
+    const { orderId } = validated<OrderIdParam>(req, "params");
     const order = await orderService.getOrderDetails(orderId);
 
     res.status(200).json({
@@ -38,8 +39,8 @@ export const getOrderDetails = async (req: Request, res: Response, next: NextFun
 
 export const updateOrderStatus = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { orderId } = orderIdParamSchema.parse(req.params);
-    const { status, reason, idempotencyKey } = updateOrderStatusBodySchema.parse(req.body);
+    const { orderId } = validated<OrderIdParam>(req, "params");
+    const { status, reason, idempotencyKey } = validated<UpdateOrderStatusBody>(req, "body");
 
     const order = await orderService.updateOrderStatus(
       orderId,
@@ -59,8 +60,8 @@ export const updateOrderStatus = async (req: Request, res: Response, next: NextF
 
 export const refundOrder = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { orderId } = orderIdParamSchema.parse(req.params);
-    const { idempotencyKey, reason } = refundOrderBodySchema.parse(req.body);
+    const { orderId } = validated<OrderIdParam>(req, "params");
+    const { idempotencyKey, reason } = validated<RefundOrderBody>(req, "body");
 
     const { order, refund } = await orderService.refundOrder(
       orderId,

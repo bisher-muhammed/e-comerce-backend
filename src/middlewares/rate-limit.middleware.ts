@@ -16,6 +16,7 @@ import {
 import { RedisStore } from "rate-limit-redis";
 
 import redis, { connectRedis } from "../config/redis";
+import { REGISTRATION_TOKEN_COOKIE } from "../utils/auth-cookie.util";
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -42,11 +43,7 @@ const createStore = (prefix: string) =>
 const ipKey = (req: Request) =>
   ipKeyGenerator(req.ip ?? "");
 
-const bodyKey = (req: Request, field: string) => {
-  const value = (
-    req.body as Record<string, unknown> | undefined
-  )?.[field];
-
+const hashedKey = (req: Request, value: unknown) => {
   if (typeof value !== "string" || value.length === 0) {
     return `anon:${ipKey(req)}`;
   }
@@ -57,6 +54,18 @@ const bodyKey = (req: Request, field: string) => {
     .digest("hex")
     .slice(0, 32);
 };
+
+const bodyKey = (req: Request, field: string) =>
+  hashedKey(
+    req,
+    (req.body as Record<string, unknown> | undefined)?.[field]
+  );
+
+const cookieKey = (req: Request, name: string) =>
+  hashedKey(
+    req,
+    (req.cookies as Record<string, unknown> | undefined)?.[name]
+  );
 
 const userKey = (req: Request) =>
   req.user ? `user:${req.user.id}` : ipKey(req);
@@ -172,7 +181,7 @@ export const verifyOtpLimiter = [
     skipSuccessfulRequests: true,
     emitHeaders: false,
     keyGenerator: (req) =>
-      bodyKey(req, "registrationToken"),
+      cookieKey(req, REGISTRATION_TOKEN_COOKIE),
     message:
       "Too many verification attempts. Please request a new code.",
   }),
@@ -191,7 +200,7 @@ export const resendOtpLimiter = [
     limit: 3,
     emitHeaders: false,
     keyGenerator: (req) =>
-      bodyKey(req, "registrationToken"),
+      cookieKey(req, REGISTRATION_TOKEN_COOKIE),
     message:
       "Too many verification codes requested. Please try again later.",
   }),

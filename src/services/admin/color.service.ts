@@ -1,5 +1,11 @@
 import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
+import {
+  CATALOG_NAMESPACE,
+  CATALOG_TTL_SECONDS,
+  cached,
+  invalidateNamespace,
+} from "../../utils/cache.util";
 
 interface CreateColorInput {
   name: string;
@@ -48,21 +54,31 @@ export const createColor = async (
     );
   }
 
-  return prisma.color.create({
+  const color = await prisma.color.create({
     data: {
       name,
       slug,
       hexCode,
     },
   });
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
+
+  return color;
 };
 
 export const listColors = async () => {
-  return prisma.color.findMany({
-    orderBy: {
-      name: "asc",
-    },
-  });
+  return cached(
+    CATALOG_NAMESPACE,
+    "colors:list",
+    CATALOG_TTL_SECONDS,
+    () =>
+      prisma.color.findMany({
+        orderBy: {
+          name: "asc",
+        },
+      })
+  );
 };
 
 export const getColorById = async (
@@ -160,12 +176,16 @@ export const updateColor = async (
       data.hexCode.trim();
   }
 
-  return prisma.color.update({
+  const updated = await prisma.color.update({
     where: {
       id,
     },
     data: updateData,
   });
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
+
+  return updated;
 };
 
 export const deleteColor = async (
@@ -203,4 +223,6 @@ export const deleteColor = async (
       id,
     },
   });
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
 };

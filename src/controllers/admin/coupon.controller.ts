@@ -1,11 +1,13 @@
 import { Request, Response, NextFunction } from "express";
 
-import {
-  couponIdSchema,
-  createCouponSchema,
-  updateCouponSchema,
-  updateCouponStatusSchema,
-  listCouponsSchema,
+import { validated } from "../../middlewares/validate.middleware";
+
+import type {
+  CouponIdParam,
+  CreateCouponInput,
+  UpdateCouponInput,
+  UpdateCouponStatusInput,
+  ListCouponsInput,
 } from "../../validations/admin/coupon.validation";
 
 import {
@@ -29,20 +31,8 @@ export const createCouponController = async (
   next: NextFunction
 ) => {
   try {
-    const parsed = createCouponSchema.safeParse(
-      req.body
-    );
-
-    if (!parsed.success) {
-      throw new AppError(
-        
-        parsed.error.issues[0]?.message ??
-          "Invalid coupon data",400
-      );
-    }
-
     const coupon = await createCoupon(
-      parsed.data
+      validated<CreateCouponInput>(req, "body")
     );
 
     return res.status(201).json({
@@ -65,21 +55,8 @@ export const listCouponsController = async (
   next: NextFunction
 ) => {
   try {
-    const parsed = listCouponsSchema.safeParse(
-      req.query
-    );
-
-    if (!parsed.success) {
-      throw new AppError(
-        
-        parsed.error.issues[0]?.message ??
-          "Invalid coupon filters",
-          400,
-      );
-    }
-
     const result = await listCoupons(
-      parsed.data
+      validated<ListCouponsInput>(req, "query")
     );
 
     return res.status(200).json({
@@ -101,20 +78,12 @@ export const getCouponByIdController = async (
   next: NextFunction
 ) => {
   try {
-    const parsed = couponIdSchema.safeParse(
-      req.params
+    const { id } = validated<CouponIdParam>(
+      req,
+      "params"
     );
 
-    if (!parsed.success) {
-      throw new AppError(
-        
-        "Invalid coupon ID",400
-      );
-    }
-
-    const coupon = await getCouponById(
-      parsed.data.id
-    );
+    const coupon = await getCouponById(id);
 
     return res.status(200).json({
       success: true,
@@ -135,52 +104,28 @@ export const updateCouponController = async (
   next: NextFunction
 ) => {
   try {
-    // --------------------------------------------------------
-    // Validate ID
-    // --------------------------------------------------------
+    const { id } = validated<CouponIdParam>(
+      req,
+      "params"
+    );
 
-    const parsedParams =
-      couponIdSchema.safeParse(req.params);
-
-    if (!parsedParams.success) {
-      throw new AppError(
-        
-        "Invalid coupon ID",400
-      );
-    }
-
-    // --------------------------------------------------------
-    // Validate body
-    // --------------------------------------------------------
-
-    const parsedBody =
-      updateCouponSchema.safeParse(req.body);
-
-    if (!parsedBody.success) {
-      throw new AppError(
-        
-        parsedBody.error.issues[0]?.message ??
-          "Invalid coupon data",400
-      );
-    }
+    const data = validated<UpdateCouponInput>(
+      req,
+      "body"
+    );
 
     // --------------------------------------------------------
     // Prevent empty PATCH
     // --------------------------------------------------------
 
-    if (
-      Object.keys(parsedBody.data).length === 0
-    ) {
+    if (Object.keys(data).length === 0) {
       throw new AppError(
-        
+
         "At least one field is required to update the coupon",400
       );
     }
 
-    const coupon = await updateCoupon(
-      parsedParams.data.id,
-      parsedBody.data
-    );
+    const coupon = await updateCoupon(id, data);
 
     return res.status(200).json({
       success: true,
@@ -203,47 +148,26 @@ export const updateCouponStatusController =
     next: NextFunction
   ) => {
     try {
-      // ------------------------------------------------------
-      // Validate ID
-      // ------------------------------------------------------
+      const { id } = validated<CouponIdParam>(
+        req,
+        "params"
+      );
 
-      const parsedParams =
-        couponIdSchema.safeParse(req.params);
-
-      if (!parsedParams.success) {
-        throw new AppError(
-          
-          "Invalid coupon ID",400
+      const { isActive } =
+        validated<UpdateCouponStatusInput>(
+          req,
+          "body"
         );
-      }
-
-      // ------------------------------------------------------
-      // Validate body
-      // ------------------------------------------------------
-
-      const parsedBody =
-        updateCouponStatusSchema.safeParse(
-          req.body
-        );
-
-      if (!parsedBody.success) {
-        throw new AppError(
-          
-          parsedBody.error.issues[0]?.message ??
-            "Invalid coupon status",
-            400
-        );
-      }
 
       const coupon =
         await updateCouponStatus(
-          parsedParams.data.id,
-          parsedBody.data.isActive
+          id,
+          isActive
         );
 
       return res.status(200).json({
         success: true,
-        message: parsedBody.data.isActive
+        message: isActive
           ? "Coupon activated successfully"
           : "Coupon deactivated successfully",
         data: coupon,
@@ -263,21 +187,12 @@ export const deleteCouponController = async (
   next: NextFunction
 ) => {
   try {
-    const parsed = couponIdSchema.safeParse(
-      req.params
+    const { id } = validated<CouponIdParam>(
+      req,
+      "params"
     );
 
-    if (!parsed.success) {
-      throw new AppError(
-        
-        "Invalid coupon ID",
-        400
-      );
-    }
-
-    const result = await deleteCoupon(
-      parsed.data.id
-    );
+    const result = await deleteCoupon(id);
 
     return res.status(200).json({
       success: true,

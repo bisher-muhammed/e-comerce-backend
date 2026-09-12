@@ -49,5 +49,6 @@ export const registerUser = async (data: RegisterInput) => {
 
   return {
     registrationToken,
+    email,
   };
 };

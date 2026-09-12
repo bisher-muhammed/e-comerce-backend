@@ -88,7 +88,12 @@ export const issueOtp = async (
     }
   );
 
-  await sendOtpEmail(email, otp);
+  void sendOtpEmail(email, otp).catch((error) => {
+    console.error(
+      `Failed to deliver the verification code to ${email}`,
+      error
+    );
+  });
 
   if (process.env.NODE_ENV !== "production") {
     console.log(`OTP for ${email}: ${otp}`);

@@ -10,7 +10,11 @@ import {
   updateCustomerStatusController,
 } from "../../controllers/admin/customer.controller";
 
-import { listCustomersSchema } from "../../validations/admin/listcustomer.validation";
+import {
+  customerIdSchema,
+  listCustomersSchema,
+  updateCustomerStatusSchema,
+} from "../../validations/admin/listcustomer.validation";
 
 const router = Router();
 
@@ -29,6 +33,9 @@ router.get(
   "/:id",
   authenticate,
   authorize("ADMIN", "SUPER_ADMIN"),
+  validate({
+    params: customerIdSchema,
+  }),
   getCustomerByIdController
 );
 
@@ -37,8 +44,11 @@ router.patch(
   "/:id/status",
   authenticate,
   authorize("ADMIN", "SUPER_ADMIN"),
+  validate({
+    params: customerIdSchema,
+    body: updateCustomerStatusSchema,
+  }),
   updateCustomerStatusController
 );
 
 export default router;
-

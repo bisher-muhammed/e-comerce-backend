@@ -2,6 +2,10 @@ import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
 import { deleteImageFromStorage } from "./image.service";
 import { ListProductsQuery } from "../../validations/product.validation";
+import {
+  CATALOG_NAMESPACE,
+  invalidateNamespace,
+} from "../../utils/cache.util";
 
 export type ProductImageInput =
   | {
@@ -398,6 +402,59 @@ const deleteImagesIfUnreferenced = async (publicIds: string[]) => {
   });
 };
 
+type TransactionClient = Parameters<
+  Parameters<typeof prisma.$transaction>[0]
+>[0];
+
+const insertColors = async (
+  tx: Pick<
+    TransactionClient,
+    "productColor" | "productImage" | "productVariant"
+  >,
+  productId: number,
+  colors: ResolvedProductColor[],
+) => {
+  if (colors.length === 0) {
+    return;
+  }
+
+  const createdColors = await tx.productColor.createManyAndReturn({
+    data: colors.map((color) => ({
+      productId,
+      colorId: color.colorId,
+    })),
+    select: { id: true, colorId: true },
+  });
+
+  const productColorIdByColorId = new Map(
+    createdColors.map((row) => [row.colorId, row.id]),
+  );
+
+  await tx.productImage.createMany({
+    data: colors.flatMap((color) =>
+      color.images.map((image) => ({
+        productColorId: productColorIdByColorId.get(color.colorId)!,
+        url: image.url,
+        publicId: image.publicId,
+        altText: image.altText || null,
+        sortOrder: image.sortOrder ?? 0,
+        isPrimary: image.isPrimary ?? false,
+      })),
+    ),
+  });
+
+  await tx.productVariant.createMany({
+    data: colors.flatMap((color) =>
+      color.variants.map((variant) => ({
+        productColorId: productColorIdByColorId.get(color.colorId)!,
+        sizeId: variant.sizeId,
+        price: variant.price,
+        stock: variant.stock,
+      })),
+    ),
+  });
+};
+
 export const createProduct = async (data: CreateProductInput) => {
   await validateCategory(data.categoryId);
 
@@ -408,7 +465,7 @@ export const createProduct = async (data: CreateProductInput) => {
   await validateProductUniqueness(data.name, data.slug);
 
   try {
-    return await prisma.$transaction(async (tx) => {
+    const created = await prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
         data: {
           name: data.name,
@@ -420,40 +477,17 @@ export const createProduct = async (data: CreateProductInput) => {
         },
       });
 
-      for (const color of resolvedColors) {
-        const productColor = await tx.productColor.create({
-          data: {
-            productId: product.id,
-            colorId: color.colorId,
-          },
-        });
-
-        await tx.productImage.createMany({
-          data: color.images.map((image) => ({
-            productColorId: productColor.id,
-            url: image.url,
-            publicId: image.publicId,
-            altText: image.altText || null,
-            sortOrder: image.sortOrder ?? 0,
-            isPrimary: image.isPrimary ?? false,
-          })),
-        });
-
-        await tx.productVariant.createMany({
-          data: color.variants.map((variant) => ({
-            productColorId: productColor.id,
-            sizeId: variant.sizeId,
-            price: variant.price,
-            stock: variant.stock,
-          })),
-        });
-      }
+      await insertColors(tx, product.id, resolvedColors);
 
       return tx.product.findUnique({
         where: { id: product.id },
         include: productInclude,
       });
     });
+
+    await invalidateNamespace(CATALOG_NAMESPACE);
+
+    return created;
   } catch (error) {
     rethrowAsUniquenessError(error);
   }
@@ -663,34 +697,7 @@ export const updateProduct = async (id: number, data: UpdateProductInput) => {
           },
         });
 
-        for (const color of resolvedColors) {
-          const productColor = await tx.productColor.create({
-            data: {
-              productId: id,
-              colorId: color.colorId,
-            },
-          });
-
-          await tx.productImage.createMany({
-            data: color.images.map((image) => ({
-              productColorId: productColor.id,
-              url: image.url,
-              publicId: image.publicId,
-              altText: image.altText || null,
-              sortOrder: image.sortOrder ?? 0,
-              isPrimary: image.isPrimary ?? false,
-            })),
-          });
-
-          await tx.productVariant.createMany({
-            data: color.variants.map((variant) => ({
-              productColorId: productColor.id,
-              sizeId: variant.sizeId,
-              price: variant.price,
-              stock: variant.stock,
-            })),
-          });
-        }
+        await insertColors(tx, id, resolvedColors);
       }
 
       return tx.product.findUnique({
@@ -703,6 +710,8 @@ export const updateProduct = async (id: number, data: UpdateProductInput) => {
   }
 
   await deleteImagesIfUnreferenced(candidatePublicIds);
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
 
   return result;
 };
@@ -732,4 +741,6 @@ export const deleteProduct = async (id: number) => {
   });
 
   await deleteImagesIfUnreferenced(publicIds);
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
 };

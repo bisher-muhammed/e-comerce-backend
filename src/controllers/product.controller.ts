@@ -24,11 +24,13 @@ import {
 import {
   createProductSchema,
   updateProductSchema,
-  productIdSchema,
-  listProductsQuerySchema,
+  type ProductIdParam,
+  type ListProductsQuery,
   type CreateProductImage,
   type UpdateProductImage,
 } from "../validations/product.validation";
+
+import { validated } from "../middlewares/validate.middleware";
 
 import AppError from "../errors/AppError";
 
@@ -54,17 +56,8 @@ const getUploadedFiles = (
 };
 
 
-const parseProductId = (req: Request): number => {
-  const validation = productIdSchema.safeParse({
-    id: req.params.id,
-  });
-
-  if (!validation.success) {
-    throw new AppError("Invalid product ID", 400);
-  }
-
-  return validation.data.id;
-};
+const parseProductId = (req: Request): number =>
+  validated<ProductIdParam>(req, "params").id;
 
 
 const logSettledFailures = (
@@ -251,8 +244,9 @@ export const list = async (
 ) => {
   try {
     const query =
-      listProductsQuerySchema.parse(
-        req.query
+      validated<ListProductsQuery>(
+        req,
+        "query"
       );
 
     const { products, pagination } =

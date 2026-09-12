@@ -4,28 +4,17 @@ import AppError from "../../errors/AppError";
 
 import { Prisma } from "../../../generated/prisma/client";
 
+import { startOfBusinessDayUtc } from "../../utils/date-range.util";
+
+
+const MAX_AVAILABLE_COUPONS = 100;
+
 
 const normalizeCouponCode = (code: string): string => {
   return code
     .trim()
     .replace(/\s+/g, "")
     .toUpperCase();
-};
-
-const getTodayStart = (): Date => {
-  const now = new Date();
-
-  return new Date(
-    Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      0,
-      0,
-      0,
-      0
-    )
-  );
 };
 
 const isCouponCurrentlyValid = (
@@ -53,6 +42,8 @@ const isCouponExhausted = (coupon: {
   );
 };
 
+const ZERO = new Prisma.Decimal(0);
+
 const calculateDiscount = (
   coupon: {
     discountType: "PERCENTAGE" | "FIXED";
@@ -60,25 +51,18 @@ const calculateDiscount = (
     minimumOrderAmount: Prisma.Decimal;
     maximumDiscountAmount: Prisma.Decimal | null;
   },
-  subtotal: number
+  subtotal: Prisma.Decimal
 ) => {
-  const minimumOrderAmount =
-    Number(coupon.minimumOrderAmount);
+  const {
+    minimumOrderAmount,
+    discountValue,
+    maximumDiscountAmount,
+  } = coupon;
 
-  const discountValue =
-    Number(coupon.discountValue);
-
-  const maximumDiscountAmount =
-    coupon.maximumDiscountAmount !== null
-      ? Number(coupon.maximumDiscountAmount)
-      : null;
-
-
-
-  if (subtotal < minimumOrderAmount) {
+  if (subtotal.lt(minimumOrderAmount)) {
     return {
       eligible: false,
-      discountAmount: 0,
+      discountAmount: ZERO,
       minimumOrderAmount,
       message: `Minimum order amount is ₹${minimumOrderAmount.toFixed(
         2
@@ -86,40 +70,34 @@ const calculateDiscount = (
     };
   }
 
-
+  let discountAmount: Prisma.Decimal;
 
   if (coupon.discountType === "PERCENTAGE") {
-    let discountAmount =
-      (subtotal * discountValue) / 100;
+    discountAmount = subtotal
+      .mul(discountValue)
+      .div(100)
+      .toDecimalPlaces(2);
 
-    // Apply maximum discount limit
     if (maximumDiscountAmount !== null) {
-      discountAmount = Math.min(
+      discountAmount = Prisma.Decimal.min(
         discountAmount,
         maximumDiscountAmount
       );
     }
-
-    // Never discount more than subtotal
-    discountAmount = Math.min(
-      discountAmount,
+  } else {
+    discountAmount = Prisma.Decimal.min(
+      discountValue,
       subtotal
     );
-
-    return {
-      eligible: true,
-      discountAmount,
-      minimumOrderAmount,
-      message: "Coupon applied successfully",
-    };
   }
 
-
-
-  const discountAmount = Math.min(
-    discountValue,
-    subtotal
-  );
+  discountAmount = Prisma.Decimal.max(
+    Prisma.Decimal.min(
+      discountAmount,
+      subtotal
+    ),
+    ZERO
+  ).toDecimalPlaces(2);
 
   return {
     eligible: true,
@@ -134,7 +112,7 @@ const calculateDiscount = (
 export const getAvailableCoupons = async (
   userId: number
 ) => {
-  const today = getTodayStart();
+  const today = startOfBusinessDayUtc();
 
   const coupons =
     await prisma.coupon.findMany({
@@ -153,6 +131,8 @@ export const getAvailableCoupons = async (
       orderBy: {
         createdAt: "desc",
       },
+
+      take: MAX_AVAILABLE_COUPONS,
 
       select: {
         id: true,
@@ -242,8 +222,12 @@ export const getAvailableCoupons = async (
 export const validateCoupon = async (
   userId: number,
   code: string,
-  subtotal: number
+  rawSubtotal: number
 ) => {
+  const subtotal = new Prisma.Decimal(
+    rawSubtotal
+  ).toDecimalPlaces(2);
+
   const normalizedCode =
     normalizeCouponCode(code);
 
@@ -280,7 +264,7 @@ export const validateCoupon = async (
 
 
 
-  const today = getTodayStart();
+  const today = startOfBusinessDayUtc();
 
   if (
     !isCouponCurrentlyValid(
@@ -377,14 +361,14 @@ export const validateCoupon = async (
       expiresOn: coupon.expiresOn,
     },
 
-    subtotal,
+    subtotal: subtotal.toFixed(2),
 
     discountAmount:
-      calculation.discountAmount,
+      calculation.discountAmount.toFixed(2),
 
-    finalSubtotal:
-      subtotal -
-      calculation.discountAmount,
+    finalSubtotal: subtotal
+      .sub(calculation.discountAmount)
+      .toFixed(2),
   };
 };
 
@@ -428,7 +412,7 @@ export const claimCoupon = async (
   }
 
 
-  const today = getTodayStart();
+  const today = startOfBusinessDayUtc();
 
   if (
     !isCouponCurrentlyValid(

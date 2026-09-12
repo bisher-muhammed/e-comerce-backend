@@ -32,12 +32,23 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+<<<<<<< HEAD
   credential UserCredential?
   cart Cart?
   wishlist Wishlist?
   addresses Address[]
   orders Order[]
   couponClaims CouponClaim[]
+=======
+credential UserCredential?
+cart Cart?
+wishlist Wishlist?
+addresses Address[]
+orders Order[]
+couponClaims CouponClaim[]
+
+@@index([email(ops: raw("gin_trgm_ops"))], type: Gin)
+>>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
 }
 
 model UserCredential {
@@ -84,8 +95,14 @@ model Product {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+<<<<<<< HEAD
   @@index([categoryId])
   @@index([isActive])
+=======
+@@index([categoryId])
+@@index([isActive, createdAt])
+@@index([createdAt])
+>>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
 }
 
 model Color {
@@ -202,8 +219,15 @@ model CartItem {
 
   quantity Int @default(1)
 
+<<<<<<< HEAD
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+=======
+priceSnapshot Decimal @db.Decimal(10, 2)
+
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
+>>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
 
   @@unique([cartId, productVariantId])
   @@index([cartId])
@@ -305,7 +329,11 @@ model Order {
   couponCode String?
   couponDiscount Decimal? @db.Decimal(10, 2)
 
+<<<<<<< HEAD
   idempotencyKey String @unique
+=======
+idempotencyKey String
+>>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
 
   expiresAt DateTime?
 
@@ -316,8 +344,16 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+<<<<<<< HEAD
   @@index([userId])
   @@index([status, paymentStatus, expiresAt])
+=======
+@@unique([userId, idempotencyKey])
+@@index([userId, createdAt])
+@@index([status, paymentStatus, expiresAt])
+@@index([contactEmail(ops: raw("gin_trgm_ops"))], type: Gin)
+@@index([contactPhone(ops: raw("gin_trgm_ops"))], type: Gin)
+>>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
 }
 
 enum RefundStatus {
@@ -376,10 +412,16 @@ model OrderItem {
 
   actions OrderItemAction[]
 
+<<<<<<< HEAD
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([orderId])
+=======
+@@index([orderId])
+@@index([productVariantId])
+@@index([productName(ops: raw("gin_trgm_ops"))], type: Gin)
+>>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
 }
 
 model OrderItemAction {
@@ -532,10 +574,18 @@ enum PaymentStatus {
 }
 
 enum OrderStatus {
+<<<<<<< HEAD
   PENDING
   CONFIRMED
   CANCELLED
   DELIVERED
+=======
+PENDING
+CONFIRMED
+SHIPPED
+CANCELLED
+DELIVERED
+>>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
 }
 
 enum OrderItemActionType {

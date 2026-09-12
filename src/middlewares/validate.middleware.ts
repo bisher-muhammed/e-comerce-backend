@@ -6,11 +6,37 @@ import {
 
 import { ZodType } from "zod";
 
+import AppError from "../errors/AppError";
+
+export type ValidatedSource =
+  | "body"
+  | "params"
+  | "query";
+
 interface ValidationSchemas {
   body?: ZodType;
   params?: ZodType;
   query?: ZodType;
 }
+
+const SOURCES: ValidatedSource[] = [
+  "body",
+  "params",
+  "query",
+];
+
+const replaceRequestSource = (
+  req: Request,
+  source: ValidatedSource,
+  value: unknown
+) => {
+  Object.defineProperty(req, source, {
+    value,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+};
 
 export const validate = (
   schemas: ValidationSchemas
@@ -25,52 +51,33 @@ export const validate = (
       message: string;
     }[] = [];
 
-    // Validate body
-    if (schemas.body) {
-      const result = schemas.body.safeParse(req.body);
+    const accepted: Partial<
+      Record<ValidatedSource, unknown>
+    > = {};
 
-      if (!result.success) {
-        errors.push(
-          ...result.error.issues.map((issue) => ({
-            field: `body.${issue.path.join(".")}`,
-            message: issue.message,
-          }))
-        );
-      } else {
-        req.body = result.data;
+    for (const source of SOURCES) {
+      const schema = schemas[source];
+
+      if (!schema) {
+        continue;
       }
-    }
 
-    // Validate params
-    if (schemas.params) {
-      const result = schemas.params.safeParse(
-        req.params
+      const result = schema.safeParse(
+        req[source]
       );
 
       if (!result.success) {
         errors.push(
           ...result.error.issues.map((issue) => ({
-            field: `params.${issue.path.join(".")}`,
+            field: `${source}.${issue.path.join(".")}`,
             message: issue.message,
           }))
         );
-      }
-    }
 
-    // Validate query
-    if (schemas.query) {
-      const result = schemas.query.safeParse(
-        req.query
-      );
-
-      if (!result.success) {
-        errors.push(
-          ...result.error.issues.map((issue) => ({
-            field: `query.${issue.path.join(".")}`,
-            message: issue.message,
-          }))
-        );
+        continue;
       }
+
+      accepted[source] = result.data;
     }
 
     if (errors.length > 0) {
@@ -81,6 +88,37 @@ export const validate = (
       });
     }
 
+    req.validated = {
+      ...req.validated,
+      ...accepted,
+    };
+
+    for (const source of SOURCES) {
+      if (source in accepted) {
+        replaceRequestSource(
+          req,
+          source,
+          accepted[source]
+        );
+      }
+    }
+
     next();
   };
+};
+
+export const validated = <T>(
+  req: Request,
+  source: ValidatedSource
+): T => {
+  const bag = req.validated;
+
+  if (!bag || !(source in bag)) {
+    throw new AppError(
+      `Request ${source} was not validated for this route`,
+      500
+    );
+  }
+
+  return bag[source] as T;
 };

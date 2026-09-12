@@ -15,6 +15,7 @@ import {
 import {
   createColorSchema,
   updateColorSchema,
+  colorIdSchema,
 } from "../validations/color.validation";
 
 const router = Router();
@@ -37,17 +38,22 @@ router.get(
 
 router.get(
   "/:id",
+  validate({ params: colorIdSchema }),
   getColorByIdController
 );
 
 router.patch(
   "/:id",
-  validate({ body: updateColorSchema }),
+  validate({
+    params: colorIdSchema,
+    body: updateColorSchema,
+  }),
   updateColorController
 );
 
 router.delete(
   "/:id",
+  validate({ params: colorIdSchema }),
   deleteColorController
 );
 

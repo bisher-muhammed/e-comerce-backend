@@ -8,6 +8,14 @@ const transporter = nodemailer.createTransport({
     user: process.env.EMAIL_HOST_USER,
     pass: process.env.EMAIL_HOST_PASSWORD,
   },
+
+  pool: true,
+  maxConnections: Number(process.env.EMAIL_MAX_CONNECTIONS) || 3,
+  maxMessages: Number(process.env.EMAIL_MAX_MESSAGES) || 100,
+
+  connectionTimeout: 10_000,
+  greetingTimeout: 10_000,
+  socketTimeout: 20_000,
 });
 
 export const sendOtpEmail = async (
@@ -47,11 +55,13 @@ export const sendOtpEmail = async (
         </div>
       `,
     });
-
-    console.log(`OTP email sent to ${email}`);
   } catch (error) {
     console.error("Email service error:", error);
 
     throw new Error("Unable to send verification email");
   }
+};
+
+export const closeEmailTransport = async (): Promise<void> => {
+  transporter.close();
 };

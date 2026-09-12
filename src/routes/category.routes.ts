@@ -16,6 +16,7 @@ import {
 import {
   createCategorySchema,
   updateCategorySchema,
+  categoryIdSchema,
 } from "../validations/category.validation";
 
 const router = Router();
@@ -36,27 +37,34 @@ router.get(
 
 router.get(
   "/:id",
+  validate({ params: categoryIdSchema }),
   getCategoryByIdController
 );
 
 router.patch(
   "/:id",
-  validate({ body: updateCategorySchema }),
+  validate({
+    params: categoryIdSchema,
+    body: updateCategorySchema,
+  }),
   updateCategoryController
 );
 
 router.patch(
   "/:id/block",
+  validate({ params: categoryIdSchema }),
   blockCategoryController
 );
 
 router.patch(
   "/:id/unblock",
+  validate({ params: categoryIdSchema }),
   unblockCategoryController
 );
 
 router.delete(
   "/:id",
+  validate({ params: categoryIdSchema }),
   deleteCategoryController
 );
 

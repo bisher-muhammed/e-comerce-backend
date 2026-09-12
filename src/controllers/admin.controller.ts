@@ -6,7 +6,12 @@ import {
   getAdminById,
 } from "../services/admin/create-admin.service";
 
-import { CreateAdminInput } from "../validations/admin.validation";
+import { validated } from "../middlewares/validate.middleware";
+
+import type {
+  AdminIdParam,
+  CreateAdminInput,
+} from "../validations/admin.validation";
 
 export const createAdminController = async (
   req: Request,
@@ -15,7 +20,7 @@ export const createAdminController = async (
 ) => {
   try {
     const admin = await createAdmin(
-      req.body as CreateAdminInput
+      validated<CreateAdminInput>(req, "body")
     );
 
     res.status(201).json({
@@ -52,7 +57,7 @@ export const getAdminByIdController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = validated<AdminIdParam>(req, "params");
 
     const admin = await getAdminById(id);
 

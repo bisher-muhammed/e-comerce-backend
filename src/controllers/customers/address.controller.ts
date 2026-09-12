@@ -9,12 +9,13 @@ import {
   setDefaultAddress,
 } from "../../services/customer/address.service";
 
-import {
-  createAddressSchema,
-  updateAddressSchema,
-} from "../../validations/customer/address.validation";
+import { validated } from "../../middlewares/validate.middleware";
 
-import AppError from "../../errors/AppError";
+import type {
+  AddressIdParam,
+  CreateAddressInput,
+  UpdateAddressInput,
+} from "../../validations/customer/address.validation";
 
 export const getAddressesController = async (
   req: Request,
@@ -35,13 +36,9 @@ export const getAddressController = async (
   res: Response
 ) => {
   const userId = req.user!.id;
-  const addressId = Number(req.params.id);
+  const { id } = validated<AddressIdParam>(req, "params");
 
-  if (!Number.isInteger(addressId)) {
-    throw new AppError("Invalid address ID", 400);
-  }
-
-  const address = await getAddress(userId, addressId);
+  const address = await getAddress(userId, id);
 
   res.status(200).json({
     success: true,
@@ -55,15 +52,9 @@ export const createAddressController = async (
 ) => {
   const userId = req.user!.id;
 
-  // Previously req.body went straight to the service, unvalidated —
-  // createAddressSchema existed but was never called. Fixed here.
-  const parsed = createAddressSchema.safeParse(req.body);
+  const data = validated<CreateAddressInput>(req, "body");
 
-  if (!parsed.success) {
-    throw new AppError(parsed.error.issues[0].message, 400);
-  }
-
-  const address = await createAddress(userId, parsed.data);
+  const address = await createAddress(userId, data);
 
   res.status(201).json({
     success: true,
@@ -77,19 +68,11 @@ export const updateAddressController = async (
   res: Response
 ) => {
   const userId = req.user!.id;
-  const addressId = Number(req.params.id);
+  const { id } = validated<AddressIdParam>(req, "params");
 
-  if (!Number.isInteger(addressId)) {
-    throw new AppError("Invalid address ID", 400);
-  }
+  const data = validated<UpdateAddressInput>(req, "body");
 
-  const parsed = updateAddressSchema.safeParse(req.body);
-
-  if (!parsed.success) {
-    throw new AppError(parsed.error.issues[0].message, 400);
-  }
-
-  const address = await updateAddress(userId, addressId, parsed.data);
+  const address = await updateAddress(userId, id, data);
 
   res.status(200).json({
     success: true,
@@ -103,13 +86,9 @@ export const deleteAddressController = async (
   res: Response
 ) => {
   const userId = req.user!.id;
-  const addressId = Number(req.params.id);
+  const { id } = validated<AddressIdParam>(req, "params");
 
-  if (!Number.isInteger(addressId)) {
-    throw new AppError("Invalid address ID", 400);
-  }
-
-  const result = await deleteAddress(userId, addressId);
+  const result = await deleteAddress(userId, id);
 
   res.status(200).json({
     success: true,
@@ -122,13 +101,9 @@ export const setDefaultAddressController = async (
   res: Response
 ) => {
   const userId = req.user!.id;
-  const addressId = Number(req.params.id);
+  const { id } = validated<AddressIdParam>(req, "params");
 
-  if (!Number.isInteger(addressId)) {
-    throw new AppError("Invalid address ID", 400);
-  }
-
-  const address = await setDefaultAddress(userId, addressId);
+  const address = await setDefaultAddress(userId, id);
 
   res.status(200).json({
     success: true,

@@ -39,3 +39,7 @@ export type CreateColorInput = z.infer<
 export type UpdateColorInput = z.infer<
   typeof updateColorSchema
 >;
+
+export type ColorIdParam = z.infer<
+  typeof colorIdSchema
+>;

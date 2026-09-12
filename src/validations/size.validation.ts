@@ -40,3 +40,6 @@ export type CreateSizeInput =
 
 export type UpdateSizeInput =
   z.infer<typeof updateSizeSchema>;
+
+export type SizeIdParam =
+  z.infer<typeof sizeIdSchema>;

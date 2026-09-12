@@ -10,13 +10,12 @@ import {
   claimCoupon,
 } from "../../services/customer/coupon.service";
 
-import {
-  couponCodeParamsSchema,
-  validateCouponSchema,
-  claimCouponSchema,
-} from "../../validations/customer/coupon.validation";
+import { validated } from "../../middlewares/validate.middleware";
 
-import AppError from "../../errors/AppError";
+import type {
+  CouponCodeParams,
+  ValidateCouponQuery,
+} from "../../validations/customer/coupon.validation";
 
 
 export const getAvailableCouponsController =
@@ -44,40 +43,23 @@ export const validateCouponController =
   ) => {
     const userId = req.user!.id;
 
-    const parsedParams =
-      couponCodeParamsSchema.safeParse(
-        req.params
+    const { code } =
+      validated<CouponCodeParams>(
+        req,
+        "params"
       );
 
-    if (!parsedParams.success) {
-      throw new AppError(
-        parsedParams.error.issues[0]
-          ?.message ??
-          "Invalid coupon code",
-        400
+    const { subtotal } =
+      validated<ValidateCouponQuery>(
+        req,
+        "query"
       );
-    }
-
-    const parsedQuery =
-      validateCouponSchema.safeParse({
-        code: parsedParams.data.code,
-        subtotal: req.query.subtotal,
-      });
-
-    if (!parsedQuery.success) {
-      throw new AppError(
-        parsedQuery.error.issues[0]
-          ?.message ??
-          "Invalid coupon validation data",
-        400
-      );
-    }
 
     const coupon =
       await validateCoupon(
         userId,
-        parsedQuery.data.code,
-        parsedQuery.data.subtotal
+        code,
+        subtotal
       );
 
     res.status(200).json({
@@ -94,44 +76,14 @@ export const claimCouponController =
   ) => {
     const userId = req.user!.id;
 
-
-    const parsedParams =
-      couponCodeParamsSchema.safeParse(
-        req.params
+    const { code } =
+      validated<CouponCodeParams>(
+        req,
+        "params"
       );
-
-    if (!parsedParams.success) {
-      throw new AppError(
-        parsedParams.error.issues[0]
-          ?.message ??
-          "Invalid coupon code",
-        400
-      );
-    }
-
-
-
-    const parsedBody =
-      claimCouponSchema.safeParse(
-        req.body ?? {}
-      );
-
-    if (!parsedBody.success) {
-      throw new AppError(
-        parsedBody.error.issues[0]
-          ?.message ??
-          "Invalid coupon claim request",
-        400
-      );
-    }
-
-
 
     const claim =
-      await claimCoupon(
-        userId,
-        parsedParams.data.code
-      );
+      await claimCoupon(userId, code);
 
     res.status(201).json({
       success: true,
@@ -140,4 +92,3 @@ export const claimCouponController =
       data: claim,
     });
   };
-
