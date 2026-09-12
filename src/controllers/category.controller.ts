@@ -10,13 +10,23 @@ import {
   deleteCategory,
 } from "../services/admin/category.service";
 
+import { validated } from "../middlewares/validate.middleware";
+
+import type {
+  CategoryIdParam,
+  CreateCategoryInput,
+  UpdateCategoryInput,
+} from "../validations/category.validation";
+
 export const createCategoryController = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const category = await createCategory(req.body);
+    const category = await createCategory(
+      validated<CreateCategoryInput>(req, "body")
+    );
 
     return res.status(201).json({
       success: true,
@@ -52,7 +62,7 @@ export const getCategoryByIdController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = validated<CategoryIdParam>(req, "params");
 
     const category = await getCategoryById(id);
 
@@ -72,11 +82,11 @@ export const updateCategoryController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = validated<CategoryIdParam>(req, "params");
 
     const category = await updateCategory(
       id,
-      req.body
+      validated<UpdateCategoryInput>(req, "body")
     );
 
     return res.status(200).json({
@@ -95,7 +105,7 @@ export const blockCategoryController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = validated<CategoryIdParam>(req, "params");
 
     const category = await blockCategory(id);
 
@@ -115,7 +125,7 @@ export const unblockCategoryController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = validated<CategoryIdParam>(req, "params");
 
     const category = await unblockCategory(id);
 
@@ -135,7 +145,7 @@ export const deleteCategoryController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = validated<CategoryIdParam>(req, "params");
 
     await deleteCategory(id);
 

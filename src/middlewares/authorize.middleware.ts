@@ -23,10 +23,6 @@ export const authorize = (
       );
     }
 
-    console.log("AUTH USER:", req.user);
-    console.log("USER ROLE:", req.user?.role);
-    console.log("ALLOWED:", allowedRoles);
-
     if (!allowedRoles.includes(req.user.role)) {
       return next(
         new AppError(

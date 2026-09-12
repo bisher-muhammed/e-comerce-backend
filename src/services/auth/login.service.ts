@@ -7,6 +7,7 @@ import {
   generateAccessToken,
   generateRefreshToken,
 } from "../../utils/jwt";
+import { startRefreshSession } from "./refresh-session.service";
 
 export const loginUser = async (data: LoginInput) => {
   const { email, password } = data;
@@ -42,8 +43,15 @@ export const loginUser = async (data: LoginInput) => {
     role: user.role,
   };
 
+  const { sid, jti } = await startRefreshSession(user.id);
+
   const accessToken = generateAccessToken(payload);
-  const refreshToken = generateRefreshToken(payload);
+
+  const refreshToken = generateRefreshToken({
+    ...payload,
+    sid,
+    jti,
+  });
 
   return {
     user: {

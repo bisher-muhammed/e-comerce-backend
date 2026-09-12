@@ -12,13 +12,23 @@ import {
   deleteSize,
 } from "../services/admin/size.service";
 
+import { validated } from "../middlewares/validate.middleware";
+
+import type {
+  SizeIdParam,
+  CreateSizeInput,
+  UpdateSizeInput,
+} from "../validations/size.validation";
+
 export const createSizeController = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const size = await createSize(req.body);
+    const size = await createSize(
+      validated<CreateSizeInput>(req, "body")
+    );
 
     return res.status(201).json({
       success: true,
@@ -53,7 +63,7 @@ export const getSizeByIdController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = validated<SizeIdParam>(req, "params");
 
     const size = await getSizeById(id);
 
@@ -72,11 +82,11 @@ export const updateSizeController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = validated<SizeIdParam>(req, "params");
 
     const size = await updateSize(
       id,
-      req.body
+      validated<UpdateSizeInput>(req, "body")
     );
 
     return res.status(200).json({
@@ -95,7 +105,7 @@ export const deleteSizeController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = validated<SizeIdParam>(req, "params");
 
     await deleteSize(id);
 

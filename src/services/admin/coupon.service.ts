@@ -77,6 +77,8 @@ export const createCoupon = async (
         maximumDiscountAmount:
           data.maximumDiscountAmount ?? null,
 
+        usageLimit: data.usageLimit,
+
         startsOn: data.startsOn,
         expiresOn: data.expiresOn,
 
@@ -412,6 +414,18 @@ export const updateCoupon = async (
   }
 
 
+  if (
+    data.usageLimit !== undefined &&
+    data.usageLimit !== null &&
+    data.usageLimit <
+      existingCoupon.usedCount
+  ) {
+    throw new AppError(
+      `Usage limit cannot be lower than the ${existingCoupon.usedCount} redemption(s) already made`,
+      400
+    );
+  }
+
   const finalDiscountType =
     data.discountType ??
     existingCoupon.discountType;
@@ -419,6 +433,10 @@ export const updateCoupon = async (
   const finalDiscountValue =
     data.discountValue ??
     Number(existingCoupon.discountValue);
+
+  const finalMinimumOrderAmount =
+    data.minimumOrderAmount ??
+    Number(existingCoupon.minimumOrderAmount);
 
   const finalMaximumDiscountAmount =
     data.maximumDiscountAmount !== undefined
@@ -463,8 +481,19 @@ export const updateCoupon = async (
     finalMaximumDiscountAmount !== null
   ) {
     throw new AppError(
-      
+
       "Maximum discount amount can only be used with percentage coupons", 400
+    );
+  }
+
+  if (
+    finalDiscountType === "FIXED" &&
+    finalMinimumOrderAmount <=
+      finalDiscountValue
+  ) {
+    throw new AppError(
+      "Minimum order amount must be greater than the discount value for a fixed-amount coupon",
+      400
     );
   }
 
@@ -504,6 +533,11 @@ export const updateCoupon = async (
   ) {
     updateData.maximumDiscountAmount =
       data.maximumDiscountAmount;
+  }
+
+  if (data.usageLimit !== undefined) {
+    updateData.usageLimit =
+      data.usageLimit;
   }
 
   if (data.startsOn !== undefined) {

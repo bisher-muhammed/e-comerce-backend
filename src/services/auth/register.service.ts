@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import prisma from "../../config/prisma";
 import redis from "../../config/redis";
 import { RegisterInput } from "../../validations/auth.validation";
-import { sendOtpEmail } from "../email.service";
+import { issueOtp, registrationKey, REGISTRATION_TTL_SECONDS, } from "./otp.service";
 import AppError from "../../errors/AppError";
 
 export const registerUser = async (data: RegisterInput) => {
@@ -27,15 +27,7 @@ export const registerUser = async (data: RegisterInput) => {
     .randomBytes(32)
     .toString("hex");
 
-  // 4. Generate 6-digit OTP
-  const otp = crypto
-    .randomInt(100000, 1000000)
-    .toString();
-
-  // 5. Hash OTP
-  const otpHash = await argon2.hash(otp);
-
-  // 6. Store registration data
+  // 4. Store registration data
   // Registration session expires after 10 minutes
   const registrationData = {
     firstName,
@@ -45,30 +37,18 @@ export const registerUser = async (data: RegisterInput) => {
   };
 
   await redis.set(
-    `registration:${registrationToken}`,
+    registrationKey(registrationToken),
     JSON.stringify(registrationData),
     {
-      EX: 600,
+      EX: REGISTRATION_TTL_SECONDS,
     }
   );
 
-  // 7. Store OTP separately
-  // OTP expires after 2 minutes
-  await redis.set(
-    `otp:${registrationToken}`,
-    otpHash,
-    {
-      EX: 120,
-    }
-  );
-
-  // 8. Send OTP email
-  await sendOtpEmail(email, otp);
-
-  // Development only
-  console.log(`OTP for ${email}: ${otp}`);
+  // 5. Mint and send the first OTP
+  await issueOtp(registrationToken, email);
 
   return {
     registrationToken,
+    email,
   };
 };

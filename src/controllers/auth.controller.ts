@@ -5,9 +5,28 @@ import { verifyRegistrationOtp } from "../services/auth/verify.service";
 import { resendRegistrationOtp } from "../services/auth/resend.service";
 import { loginUser } from "../services/auth/login.service";
 import { refreshAccessToken } from "../services/auth/refresh.service";
+import { logoutUser } from "../services/auth/logout.service";
 import prisma from "../config/prisma";
 import AppError from "../errors/AppError";
+import { accessTokenCookieOptions, clearAccessTokenCookieOptions, clearLegacyRefreshTokenCookieOptions, clearRefreshTokenCookieOptions, clearRegistrationTokenCookieOptions, refreshTokenCookieOptions, REGISTRATION_TOKEN_COOKIE, registrationTokenCookieOptions, } from "../utils/auth-cookie.util";
 
+
+const requireRegistrationToken = (req: Request) => {
+  const registrationToken =
+    req.cookies?.[REGISTRATION_TOKEN_COOKIE];
+
+  if (
+    typeof registrationToken !== "string" ||
+    registrationToken.length === 0
+  ) {
+    throw new AppError(
+      "Registration session is missing or has expired. Please register again.",
+      400
+    );
+  }
+
+  return registrationToken;
+};
 
 export const register = async (
   req: Request,
@@ -17,10 +36,18 @@ export const register = async (
   try {
     const registration = await registerUser(req.body);
 
+    res.cookie(
+      REGISTRATION_TOKEN_COOKIE,
+      registration.registrationToken,
+      registrationTokenCookieOptions
+    );
+
     return res.status(201).json({
       success: true,
       message: "Verification code sent",
-      data: registration,
+      data: {
+        email: registration.email,
+      },
     });
   } catch (error) {
     next(error);
@@ -33,11 +60,18 @@ export const verifyOtp = async (
   next: NextFunction
 ) => {
   try {
-    const { registrationToken, otp } = req.body;
+    const registrationToken = requireRegistrationToken(req);
+
+    const { otp } = req.body;
 
     const user = await verifyRegistrationOtp(
       registrationToken,
       otp
+    );
+
+    res.clearCookie(
+      REGISTRATION_TOKEN_COOKIE,
+      clearRegistrationTokenCookieOptions
     );
 
     return res.status(201).json({
@@ -56,7 +90,7 @@ export const resendOtp = async (
   next: NextFunction
 ) => {
   try {
-    const { registrationToken } = req.body;
+    const registrationToken = requireRegistrationToken(req);
 
     const result = await resendRegistrationOtp(
       registrationToken
@@ -79,19 +113,17 @@ export const login = async (
   try {
     const result = await loginUser(req.body);
 
-    res.cookie("access_token", result.accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 15 * 60 * 1000, // 15 minutes
-    });
+    res.cookie(
+      "access_token",
+      result.accessToken,
+      accessTokenCookieOptions
+    );
 
-    res.cookie("refresh_token", result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    res.cookie(
+      "refresh_token",
+      result.refreshToken,
+      refreshTokenCookieOptions
+    );
 
     return res.status(200).json({
       success: true,
@@ -99,6 +131,39 @@ export const login = async (
       data: {
         user: result.user,
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const logout = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    res.clearCookie(
+      "access_token",
+      clearAccessTokenCookieOptions
+    );
+
+    res.clearCookie(
+      "refresh_token",
+      clearRefreshTokenCookieOptions
+    );
+
+    res.clearCookie(
+      "refresh_token",
+      clearLegacyRefreshTokenCookieOptions
+    );
+
+    // Cleared first so the browser is disarmed even if this fails
+    await logoutUser(req.cookies.refresh_token);
+
+    return res.status(200).json({
+      success: true,
+      message: "Logged out successfully",
     });
   } catch (error) {
     next(error);
@@ -158,14 +223,20 @@ export const refreshToken = async (
       throw new AppError("Refresh token missing", 401);
     }
 
-    const accessToken = await refreshAccessToken(refreshToken);
+    const result = await refreshAccessToken(refreshToken);
 
-    res.cookie("access_token", accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 15 * 60 * 1000,
-    });
+    res.cookie(
+      "access_token",
+      result.accessToken,
+      accessTokenCookieOptions
+    );
+
+    // Rotated on every refresh — the cookie has to move with it
+    res.cookie(
+      "refresh_token",
+      result.refreshToken,
+      refreshTokenCookieOptions
+    );
 
     return res.status(200).json({
       success: true,

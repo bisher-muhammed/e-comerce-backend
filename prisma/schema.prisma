@@ -38,6 +38,8 @@ wishlist Wishlist?
 addresses Address[]
 orders Order[]
 couponClaims CouponClaim[]
+
+@@index([email(ops: raw("gin_trgm_ops"))], type: Gin)
 }
 
 model UserCredential {
@@ -83,7 +85,8 @@ createdAt DateTime @default(now())
 updatedAt DateTime @updatedAt
 
 @@index([categoryId])
-@@index([isActive])
+@@index([isActive, createdAt])
+@@index([createdAt])
 }
 
 model Color {
@@ -200,6 +203,8 @@ productVariant ProductVariant @relation(fields: [productVariantId], references: 
 
 quantity Int @default(1)
 
+priceSnapshot Decimal @db.Decimal(10, 2)
+
 createdAt DateTime @default(now())
 updatedAt DateTime @updatedAt
 
@@ -303,18 +308,46 @@ refundedAmount Decimal @default(0) @db.Decimal(10, 2)
 couponCode String?
 couponDiscount Decimal? @db.Decimal(10, 2)
 
-idempotencyKey String @unique
+idempotencyKey String
 
 expiresAt DateTime?
 
 items OrderItem[]
 couponClaim CouponClaim?
+refunds Refund[]
 
 createdAt DateTime @default(now())
 updatedAt DateTime @updatedAt
 
-@@index([userId])
+@@unique([userId, idempotencyKey])
+@@index([userId, createdAt])
 @@index([status, paymentStatus, expiresAt])
+@@index([contactEmail(ops: raw("gin_trgm_ops"))], type: Gin)
+@@index([contactPhone(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+enum RefundStatus {
+PENDING
+PROCESSED
+FAILED
+}
+
+model Refund {
+id Int @id @default(autoincrement())
+orderId Int
+order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+amount Decimal @db.Decimal(10, 2)
+status RefundStatus @default(PENDING)
+razorpayPaymentId String
+razorpayRefundId String? @unique
+reason String?
+failureReason String?
+idempotencyKey String
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
+@@unique([orderId, idempotencyKey])
+@@index([orderId])
+@@index([status])
 }
 
 model OrderItem {
@@ -342,6 +375,8 @@ createdAt DateTime @default(now())
 updatedAt DateTime @updatedAt
 
 @@index([orderId])
+@@index([productVariantId])
+@@index([productName(ops: raw("gin_trgm_ops"))], type: Gin)
 }
 
 model OrderItemAction {
@@ -382,6 +417,8 @@ startsOn DateTime @db.Date
 expiresOn DateTime @db.Date
 
 isActive Boolean @default(true)
+usageLimit Int?
+usedCount Int @default(0)
 
 claims CouponClaim[]
 
@@ -432,6 +469,7 @@ FAILED
 enum OrderStatus {
 PENDING
 CONFIRMED
+SHIPPED
 CANCELLED
 DELIVERED
 }

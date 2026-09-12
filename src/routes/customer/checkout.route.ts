@@ -1,6 +1,10 @@
 import {Router} from "express";
 import {authenticate} from "../../middlewares/auth.middleware";
 import {validate} from "../../middlewares/validate.middleware";
+import {
+    checkoutLimiter,
+    verifyPaymentLimiter
+} from "../../middlewares/rate-limit.middleware";
 
 import {
     checkoutSchema,
@@ -19,6 +23,7 @@ const router = Router();
 router.post(
     "/",
     authenticate,
+    checkoutLimiter,
     validate({body: checkoutSchema}),
     createCheckoutController
 );
@@ -27,6 +32,7 @@ router.post(
 router.post(
     "/verify",
     authenticate,
+    verifyPaymentLimiter,
     validate({body: verifyPaymentSchema}),
     verifyPaymentController
 );

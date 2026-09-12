@@ -9,7 +9,13 @@ import {
 
 import { Prisma } from "../../../generated/prisma/client";
 
+import { isUniqueConstraintOn } from "../../utils/transaction-retry.util";
+
 import { ListOrdersQuery } from "../../validations/admin/order.validation";
+import { calculateCancellationAmounts, sumGrossCancelled, } from "../../utils/order-amount.util";
+import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
+import { cancelOrderItems } from "../../utils/order-cancellation.util";
+import { issueRefundAfterCancellation, issueRefundForOrder, RefundOutcome, } from "../refund.service";
 
 
 const ORDER_STATUS_TRANSITIONS: Record<
@@ -22,6 +28,12 @@ const ORDER_STATUS_TRANSITIONS: Record<
     ],
 
     CONFIRMED: [
+        OrderStatus.SHIPPED,
+        OrderStatus.DELIVERED,
+        OrderStatus.CANCELLED,
+    ],
+
+    SHIPPED: [
         OrderStatus.DELIVERED,
         OrderStatus.CANCELLED,
     ],
@@ -30,6 +42,12 @@ const ORDER_STATUS_TRANSITIONS: Record<
 
     CANCELLED: [],
 };
+
+const ADMIN_CANCELLABLE_STATUSES: OrderStatus[] = [
+    OrderStatus.PENDING,
+    OrderStatus.CONFIRMED,
+    OrderStatus.SHIPPED,
+];
 
 // ============================================================
 // VALID NEXT STATUSES
@@ -46,15 +64,176 @@ export const getValidNextStatuses = (
 // ============================================================
 
 function isIdempotencyConflict(err: unknown): boolean {
-    return (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
+    return isUniqueConstraintOn(
+        err,
+        "idempotencyKey"
     );
 }
 
 // ============================================================
 // LIST ORDERS
 // ============================================================
+
+const ORDER_LIST_SELECT = {
+    id: true,
+
+    status: true,
+
+    paymentStatus: true,
+
+    paymentMethod: true,
+
+    contactEmail: true,
+
+    contactPhone: true,
+
+    subtotal: true,
+
+    total: true,
+
+    cancelledAmount: true,
+
+    refundedAmount: true,
+
+    cancellationReason: true,
+
+    expiresAt: true,
+
+    createdAt: true,
+
+    updatedAt: true,
+
+    user: {
+        select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+        },
+    },
+
+    _count: {
+        select: {
+            items: true,
+        },
+    },
+} satisfies Prisma.OrderSelect;
+
+const SORT_COLUMNS: Record<
+    ListOrdersQuery["sortBy"],
+    string
+> = {
+    createdAt: "createdAt",
+    total: "total",
+    status: "status",
+};
+
+const searchedOrderIds = async (params: {
+    search: string;
+    status?: OrderStatus;
+    paymentStatus?: PaymentStatus;
+    paymentMethod?: PaymentMethod;
+    sortBy: ListOrdersQuery["sortBy"];
+    sortOrder: ListOrdersQuery["sortOrder"];
+    skip: number;
+    take: number;
+}) => {
+    const {
+        search,
+        status,
+        paymentStatus,
+        paymentMethod,
+        sortBy,
+        sortOrder,
+        skip,
+        take,
+    } = params;
+
+    const pattern = `%${search}%`;
+
+    const searchAsId = /^\d+$/.test(search)
+        ? Number(search)
+        : undefined;
+
+    const conditions: Prisma.Sql[] = [
+        Prisma.sql`o."id" IN (
+                SELECT "id" FROM "Order"
+                 WHERE "contactEmail" ILIKE ${pattern}
+            UNION
+                SELECT "id" FROM "Order"
+                 WHERE "contactPhone" LIKE ${pattern}
+            UNION
+                SELECT "orderId" FROM "OrderItem"
+                 WHERE "productName" ILIKE ${pattern}
+            UNION
+                SELECT o2."id" FROM "Order" o2
+                  JOIN "User" u ON u."id" = o2."userId"
+                 WHERE u."email" ILIKE ${pattern}
+            ${
+                searchAsId === undefined
+                    ? Prisma.empty
+                    : Prisma.sql`UNION SELECT ${searchAsId}::int`
+            }
+        )`,
+    ];
+
+    if (status) {
+        conditions.push(
+            Prisma.sql`o."status" = ${status}::"OrderStatus"`
+        );
+    }
+
+    if (paymentStatus) {
+        conditions.push(
+            Prisma.sql`o."paymentStatus" = ${paymentStatus}::"PaymentStatus"`
+        );
+    }
+
+    if (paymentMethod) {
+        conditions.push(
+            Prisma.sql`o."paymentMethod" = ${paymentMethod}::"PaymentMethod"`
+        );
+    }
+
+    const whereSql = Prisma.join(
+        conditions,
+        " AND "
+    );
+
+    const sortColumn = Prisma.raw(
+        `"${SORT_COLUMNS[sortBy]}"`
+    );
+
+    const direction = Prisma.raw(
+        sortOrder === "asc" ? "ASC" : "DESC"
+    );
+
+    const [rows, counted] =
+        await prisma.$transaction([
+            prisma.$queryRaw<
+                Array<{ id: number }>
+            >`
+                SELECT o."id"
+                  FROM "Order" o
+                 WHERE ${whereSql}
+                 ORDER BY o.${sortColumn} ${direction}
+                 LIMIT ${take} OFFSET ${skip}
+            `,
+
+            prisma.$queryRaw<
+                Array<{ count: number }>
+            >`
+                SELECT COUNT(*)::int AS count
+                  FROM "Order" o
+                 WHERE ${whereSql}
+            `,
+        ]);
+
+    return {
+        ids: rows.map((row) => row.id),
+        total: counted[0]?.count ?? 0,
+    };
+};
 
 export const listOrders = async (
     query: ListOrdersQuery
@@ -70,141 +249,88 @@ export const listOrders = async (
         sortOrder,
     } = query;
 
-    const searchAsId =
-        search && /^\d+$/.test(search)
-            ? Number(search)
-            : undefined;
+    let orders;
+    let total: number;
 
-    // --------------------------------------------------------
-    // WHERE
-    // --------------------------------------------------------
+    if (search) {
+        const matched =
+            await searchedOrderIds({
+                search,
+                status,
+                paymentStatus,
+                paymentMethod,
+                sortBy,
+                sortOrder,
+                skip: (page - 1) * limit,
+                take: limit,
+            });
 
-    const where: Prisma.OrderWhereInput = {
-        ...(status && {
-            status,
-        }),
+        total = matched.total;
 
-        ...(paymentStatus && {
-            paymentStatus,
-        }),
+        const unordered =
+            matched.ids.length === 0
+                ? []
+                : await prisma.order.findMany({
+                      where: {
+                          id: {
+                              in: matched.ids,
+                          },
+                      },
 
-        ...(paymentMethod && {
-            paymentMethod,
-        }),
+                      select: ORDER_LIST_SELECT,
+                  });
 
-        ...(search && {
-            OR: [
-                // Order ID
-                ...(searchAsId !== undefined
-                    ? [{ id: searchAsId }]
-                    : []),
+        const byId = new Map(
+            unordered.map((order) => [
+                order.id,
+                order,
+            ])
+        );
 
-                // Customer email
-                {
-                    contactEmail: {
-                        contains: search,
-                        mode: "insensitive",
+        orders = matched.ids
+            .map((id) => byId.get(id))
+            .filter(
+                (
+                    order
+                ): order is (typeof unordered)[number] =>
+                    order !== undefined
+            );
+    } else {
+        const where: Prisma.OrderWhereInput = {
+            ...(status && {
+                status,
+            }),
+
+            ...(paymentStatus && {
+                paymentStatus,
+            }),
+
+            ...(paymentMethod && {
+                paymentMethod,
+            }),
+        };
+
+        [orders, total] =
+            await prisma.$transaction([
+                prisma.order.findMany({
+                    where,
+
+                    orderBy: {
+                        [sortBy]: sortOrder,
                     },
-                },
 
-                // Customer phone
-                {
-                    contactPhone: {
-                        contains: search,
-                    },
-                },
+                    skip: (page - 1) * limit,
 
-                // Product name
-                {
-                    items: {
-                        some: {
-                            productName: {
-                                contains: search,
-                                mode: "insensitive",
-                            },
-                        },
-                    },
-                },
+                    take: limit,
 
-                // User email
-                {
-                    user: {
-                        email: {
-                            contains: search,
-                            mode: "insensitive",
-                        },
-                    },
-                },
-            ],
-        }),
-    };
+                    select: ORDER_LIST_SELECT,
+                }),
 
-    // --------------------------------------------------------
-    // QUERY
-    // --------------------------------------------------------
-
-    const [orders, total] = await prisma.$transaction([
-        prisma.order.findMany({
-            where,
-
-            orderBy: {
-                [sortBy]: sortOrder,
-            },
-
-            skip: (page - 1) * limit,
-
-            take: limit,
-
-            select: {
-                id: true,
-
-                status: true,
-
-                paymentStatus: true,
-
-                paymentMethod: true,
-
-                contactEmail: true,
-
-                contactPhone: true,
-
-                subtotal: true,
-
-                total: true,
-
-                cancelledAmount: true,
-
-                refundedAmount: true,
-
-                cancellationReason: true,
-
-                expiresAt: true,
-
-                createdAt: true,
-
-                updatedAt: true,
-
-                user: {
-                    select: {
-                        id: true,
-                        firstName: true,
-                        lastName: true,
-                        email: true,
-                    },
-                },
-
-                _count: {
-                    select: {
-                        items: true,
-                    },
-                },
-            },
-        }),
-
-        prisma.order.count({
-            where,
-        }),
-    ]);
+                prisma.order.count({
+                    where,
+                }),
+            ]);
+    }
 
     // --------------------------------------------------------
     // PAGINATION
@@ -340,8 +466,12 @@ export const getOrderDetails = async (
 // PENDING    → CONFIRMED
 // PENDING    → CANCELLED
 //
+// CONFIRMED  → SHIPPED
 // CONFIRMED  → DELIVERED
 // CONFIRMED  → CANCELLED
+//
+// SHIPPED    → DELIVERED
+// SHIPPED    → CANCELLED
 //
 // DELIVERED  → nothing
 // CANCELLED  → nothing
@@ -490,7 +620,7 @@ export const updateOrderStatus = async (
     // ========================================================
 
     try {
-        return await prisma.$transaction(
+        await prisma.$transaction(
             async (tx) => {
                 // ------------------------------------------------
                 // Read current order inside transaction
@@ -506,11 +636,16 @@ export const updateOrderStatus = async (
                             id: true,
                             status: true,
 
+                            subtotal: true,
+                            couponDiscount: true,
+                            cancelledAmount: true,
+
                             items: {
                                 select: {
                                     id: true,
                                     price: true,
                                     remainingQuantity: true,
+                                    cancelledQuantity: true,
                                     productVariantId: true,
                                 },
                             },
@@ -547,13 +682,12 @@ export const updateOrderStatus = async (
                 // ------------------------------------------------
 
                 if (
-                    order.status !==
-                        OrderStatus.PENDING &&
-                    order.status !==
-                        OrderStatus.CONFIRMED
+                    !ADMIN_CANCELLABLE_STATUSES.includes(
+                        order.status
+                    )
                 ) {
                     throw new AppError(
-                        `Only pending or confirmed orders can be cancelled. Current status: ${order.status}`,
+                        `Only ${ADMIN_CANCELLABLE_STATUSES.join(", ")} orders can be cancelled. Current status: ${order.status}`,
                         400
                     );
                 }
@@ -590,125 +724,66 @@ export const updateOrderStatus = async (
                 // Calculate cancellation amount
                 // ------------------------------------------------
 
-                let cancellationAmount =
+                let grossCancelledNow =
                     new Prisma.Decimal(0);
 
                 for (const item of activeItems) {
-                    const quantity =
-                        item.remainingQuantity;
-
-                    const itemAmount =
-                        item.price.mul(quantity);
-
-                    cancellationAmount =
-                        cancellationAmount.add(
-                            itemAmount
+                    grossCancelledNow =
+                        grossCancelledNow.add(
+                            item.price.mul(
+                                item.remainingQuantity
+                            )
                         );
                 }
+
+                const {
+                    netCancellationAmount,
+                } = calculateCancellationAmounts({
+                    subtotal: order.subtotal,
+
+                    couponDiscount:
+                        order.couponDiscount,
+
+                    grossCancelledBefore:
+                        sumGrossCancelled(
+                            order.items
+                        ),
+
+                    netCancelledBefore:
+                        order.cancelledAmount,
+
+                    grossCancelledNow,
+                });
 
                 // ------------------------------------------------
                 // Cancel each active item
                 // ------------------------------------------------
 
-                for (const item of activeItems) {
-                    const quantity =
-                        item.remainingQuantity;
+                await cancelOrderItems(tx, {
+                    orderId,
 
-                    // --------------------------------------------
-                    // Record action
-                    // --------------------------------------------
+                    items: activeItems,
 
-                    await tx.orderItemAction.create({
-                        data: {
-                            orderItemId: item.id,
+                    reason: cleanReason,
 
-                            type: "CANCEL",
-
-                            quantity,
-
-                            reason: cleanReason,
-
-                            idempotencyKey,
-                        },
-                    });
-
-                    // --------------------------------------------
-                    // Atomic quantity update
-                    // --------------------------------------------
-
-                    const updatedItem =
-                        await tx.orderItem.updateMany({
-                            where: {
-                                id: item.id,
-
-                                orderId,
-
-                                remainingQuantity: {
-                                    gte: quantity,
-                                },
-                            },
-
-                            data: {
-                                remainingQuantity: {
-                                    decrement:
-                                        quantity,
-                                },
-
-                                cancelledQuantity: {
-                                    increment:
-                                        quantity,
-                                },
-                            },
-                        });
-
-                    if (
-                        updatedItem.count === 0
-                    ) {
-                        throw new AppError(
-                            `Failed to cancel item ${item.id} — quantity changed concurrently`,
-                            409
-                        );
-                    }
-
-                    // --------------------------------------------
-                    // Restore stock
-                    // --------------------------------------------
-
-                    await tx.productVariant.update({
-                        where: {
-                            id: item.productVariantId,
-                        },
-
-                        data: {
-                            stock: {
-                                increment:
-                                    quantity,
-                            },
-                        },
-                    });
-                }
+                    idempotencyKey,
+                });
 
                 // ------------------------------------------------
                 // Update order financial values
                 //
                 // Original amount:
                 //
-                // subtotal = ₹3000
+                // subtotal       = ₹3000
+                // couponDiscount = ₹300
+                // total          = ₹2700
                 //
                 // Cancelled:
                 //
-                // ₹1000
+                // ₹1000 gross → ₹100 of the discount → ₹900 net
                 //
                 // Result:
                 //
-                // subtotal = ₹2000
-                // total    = ₹2000
-                // cancelledAmount = ₹1000
-                //
-                // refundedAmount is NOT changed here.
-                //
-                // Refund should only increase refundedAmount
-                // after the actual refund succeeds.
                 // ------------------------------------------------
 
                 await tx.order.update({
@@ -725,20 +800,15 @@ export const updateOrderStatus = async (
 
                         cancelledAmount: {
                             increment:
-                                cancellationAmount,
-                        },
-
-                        subtotal: {
-                            decrement:
-                                cancellationAmount,
-                        },
-
-                        total: {
-                            decrement:
-                                cancellationAmount,
+                                netCancellationAmount,
                         },
                     },
                 });
+
+                await releaseCouponClaimForOrder(
+                    tx,
+                    orderId
+                );
 
                 // ------------------------------------------------
                 // Return complete updated order
@@ -775,6 +845,12 @@ export const updateOrderStatus = async (
                 currentOrder?.status ===
                 OrderStatus.CANCELLED
             ) {
+                await issueRefundAfterCancellation(
+                    orderId,
+                    idempotencyKey,
+                    cleanReason
+                );
+
                 return prisma.order.findUniqueOrThrow({
                     where: {
                         id: orderId,
@@ -785,4 +861,62 @@ export const updateOrderStatus = async (
 
         throw err;
     }
+
+    await issueRefundAfterCancellation(
+        orderId,
+        idempotencyKey,
+        cleanReason
+    );
+
+    return prisma.order.findUniqueOrThrow({
+        where: {
+            id: orderId,
+        },
+    });
+};
+
+export const refundOrder = async (
+    orderId: number,
+    idempotencyKey: string,
+    reason?: string
+): Promise<{
+    order: Prisma.OrderGetPayload<{}>;
+    refund: RefundOutcome;
+}> => {
+    const order =
+        await prisma.order.findUnique({
+            where: {
+                id: orderId,
+            },
+
+            select: {
+                id: true,
+            },
+        });
+
+    if (!order) {
+        throw new AppError(
+            "Order not found",
+            404
+        );
+    }
+
+    const refund =
+        await issueRefundForOrder(
+            orderId,
+            idempotencyKey,
+            reason
+        );
+
+    return {
+        order: await prisma.order.findUniqueOrThrow(
+            {
+                where: {
+                    id: orderId,
+                },
+            }
+        ),
+
+        refund,
+    };
 };

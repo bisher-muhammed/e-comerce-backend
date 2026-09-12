@@ -1,46 +1,34 @@
-import crypto from "crypto";
-
 import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
 
 import { OrderStatus } from "../../../generated/prisma/enums";
 import { Prisma } from "../../../generated/prisma/client";
+import { calculateCancellationAmounts, sumGrossCancelled, } from "../../utils/order-amount.util";
+import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
+import { cancelOrderItems } from "../../utils/order-cancellation.util";
+import {
+    isUniqueConstraintOn,
+    withTransactionRetry,
+} from "../../utils/transaction-retry.util";
+import { issueRefundAfterCancellation } from "../refund.service";
+import * as checkoutService from "./checkout.service";
+
+
+
+const CANCELLATION_TRANSACTION_OPTIONS = {
+    isolationLevel: "Serializable" as const,
+    maxWait: 5000,
+    timeout: 10000,
+};
 
 
 
 function isIdempotencyConflict(err: unknown): boolean {
-    return (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
+    return isUniqueConstraintOn(
+        err,
+        "idempotencyKey"
     );
 }
-
-
-function calculateCouponDiscountPortion(
-    orderSubtotal: Prisma.Decimal,
-    orderCouponDiscount: Prisma.Decimal | null,
-    cancellationAmount: Prisma.Decimal
-): Prisma.Decimal {
-    if (
-        !orderCouponDiscount ||
-        orderCouponDiscount.lte(0) ||
-        orderSubtotal.lte(0) ||
-        cancellationAmount.lte(0)
-    ) {
-        return new Prisma.Decimal(0);
-    }
-
-    const portion = orderCouponDiscount
-        .mul(cancellationAmount)
-        .div(orderSubtotal)
-        .toDecimalPlaces(2);
-
-    return Prisma.Decimal.min(
-        portion,
-        orderCouponDiscount
-    );
-}
-
 
 
 const orderDetailsSelect = {
@@ -277,15 +265,6 @@ export async function cancelOrder(
         select: {
             id: true,
             status: true,
-
-            items: {
-                select: {
-                    id: true,
-                    price: true,
-                    remainingQuantity: true,
-                    productVariantId: true,
-                },
-            },
         },
     });
 
@@ -296,6 +275,12 @@ export async function cancelOrder(
 
 
     if (order.status === "CANCELLED") {
+        await issueRefundAfterCancellation(
+            orderId,
+            idempotencyKey,
+            reason
+        );
+
         return getOrderByIdForUser(
             orderId,
             userId
@@ -314,21 +299,9 @@ export async function cancelOrder(
         );
     }
 
-    const activeItems = order.items.filter(
-        (item) =>
-            item.remainingQuantity > 0
-    );
-
-    if (activeItems.length === 0) {
-        throw new AppError(
-            "Order has no remaining quantity to cancel",
-            409
-        );
-    }
-
     try {
-        await prisma.$transaction(async (tx) => {
-           
+        await withTransactionRetry(() =>
+            prisma.$transaction(async (tx) => {
 
             const currentOrder =
                 await tx.order.findUnique({
@@ -337,9 +310,20 @@ export async function cancelOrder(
                     },
 
                     select: {
+                        status: true,
                         subtotal: true,
                         couponDiscount: true,
-                        total: true,
+                        cancelledAmount: true,
+
+                        items: {
+                            select: {
+                                id: true,
+                                price: true,
+                                remainingQuantity: true,
+                                cancelledQuantity: true,
+                                productVariantId: true,
+                            },
+                        },
                     },
                 });
 
@@ -350,79 +334,74 @@ export async function cancelOrder(
                 );
             }
 
-            let cancellationAmount =
+            if (
+                currentOrder.status !==
+                    "PENDING" &&
+                currentOrder.status !==
+                    "CONFIRMED"
+            ) {
+                throw new AppError(
+                    `Only pending or confirmed orders can be cancelled. Current status: ${currentOrder.status}`,
+                    400
+                );
+            }
+
+            const activeItems =
+                currentOrder.items.filter(
+                    (item) =>
+                        item.remainingQuantity >
+                        0
+                );
+
+            if (activeItems.length === 0) {
+                throw new AppError(
+                    "Order has no remaining quantity to cancel",
+                    409
+                );
+            }
+
+            let grossCancelledNow =
                 new Prisma.Decimal(0);
 
-
             for (const item of activeItems) {
-                const quantity =
-                    item.remainingQuantity;
-
-                
-                const itemCancellationAmount =
-                    item.price.mul(quantity);
-
-                cancellationAmount =
-                    cancellationAmount.add(
-                        itemCancellationAmount
+                grossCancelledNow =
+                    grossCancelledNow.add(
+                        item.price.mul(
+                            item.remainingQuantity
+                        )
                     );
-
-                // --------------------------------------------
-                // Record cancellation action
-                // --------------------------------------------
-
-                await tx.orderItemAction.create({
-                    data: {
-                        orderItemId: item.id,
-                        type: "CANCEL",
-                        quantity,
-                        reason,
-                        idempotencyKey,
-                    },
-                });
-
-
-                const updated =
-                    await tx.orderItem.updateMany({
-                        where: {
-                            id: item.id,
-
-                            remainingQuantity: {
-                                gte: quantity,
-                            },
-                        },
-
-                        data: {
-                            remainingQuantity: {
-                                decrement: quantity,
-                            },
-
-                            cancelledQuantity: {
-                                increment: quantity,
-                            },
-                        },
-                    });
-
-                if (updated.count === 0) {
-                    throw new AppError(
-                        `Failed to cancel item ${item.id} — quantity changed concurrently`,
-                        409
-                    );
-                }
-
-
-                await tx.productVariant.update({
-                    where: {
-                        id: item.productVariantId,
-                    },
-
-                    data: {
-                        stock: {
-                            increment: quantity,
-                        },
-                    },
-                });
             }
+
+            const {
+                netCancellationAmount,
+            } = calculateCancellationAmounts({
+                subtotal:
+                    currentOrder.subtotal,
+
+                couponDiscount:
+                    currentOrder.couponDiscount,
+
+                grossCancelledBefore:
+                    sumGrossCancelled(
+                        currentOrder.items
+                    ),
+
+                netCancelledBefore:
+                    currentOrder.cancelledAmount,
+
+                grossCancelledNow,
+            });
+
+
+            await cancelOrderItems(tx, {
+                orderId,
+
+                items: activeItems,
+
+                reason,
+
+                idempotencyKey,
+            });
 
 
 
@@ -439,18 +418,19 @@ export async function cancelOrder(
 
                     cancelledAmount: {
                         increment:
-                            cancellationAmount,
+                            netCancellationAmount,
                     },
-
-                    subtotal: new Prisma.Decimal(0),
-
-                    couponDiscount:
-                        new Prisma.Decimal(0),
-
-                    total: new Prisma.Decimal(0),
                 },
             });
-        });
+
+            await releaseCouponClaimForOrder(
+                tx,
+                orderId
+            );
+            },
+            CANCELLATION_TRANSACTION_OPTIONS
+            )
+        );
     } catch (err) {
 
 
@@ -470,6 +450,12 @@ export async function cancelOrder(
                 current?.status ===
                 "CANCELLED"
             ) {
+                await issueRefundAfterCancellation(
+                    orderId,
+                    idempotencyKey,
+                    reason
+                );
+
                 return getOrderByIdForUser(
                     orderId,
                     userId
@@ -479,6 +465,12 @@ export async function cancelOrder(
 
         throw err;
     }
+
+    await issueRefundAfterCancellation(
+        orderId,
+        idempotencyKey,
+        reason
+    );
 
     return getOrderByIdForUser(
         orderId,
@@ -506,76 +498,81 @@ export async function cancelOrderItem(
     idempotencyKey: string,
     reason?: string
 ) {
-    const item =
-        await prisma.orderItem.findFirst({
-            where: {
-                id: itemId,
-
-                orderId,
-
-                order: {
-                    userId,
-                },
-            },
-
-            select: {
-                id: true,
-                price: true,
-                remainingQuantity: true,
-                productVariantId: true,
-
-                order: {
-                    select: {
-                        status: true,
-                    },
-                },
-            },
-        });
-
-    if (!item) {
-        throw new AppError(
-            "Order item not found",
-            404
-        );
-    }
-
-
-
-    if (
-        item.order.status !== "PENDING" &&
-        item.order.status !== "CONFIRMED"
-    ) {
-        throw new AppError(
-            `Items can only be cancelled while the order is PENDING or CONFIRMED. Current status: ${item.order.status}`,
-            400
-        );
-    }
-
-
-
-    if (
-        quantity >
-        item.remainingQuantity
-    ) {
-        throw new AppError(
-            `Cannot cancel ${quantity} unit(s); only ${item.remainingQuantity} remain active`,
-            409
-        );
-    }
-
-
-
-    const cancellationAmount =
-        item.price.mul(quantity);
+    let result: {
+        id: number;
+        remainingQuantity: number;
+        cancelledQuantity: number;
+        returnedQuantity: number;
+        updatedAt: Date;
+    };
 
     try {
-        return await prisma.$transaction(
+        result = await withTransactionRetry(() =>
+            prisma.$transaction(
             async (tx) => {
                 // ------------------------------------------------
                 // Read CURRENT order financial values.
                 //
                 // This must happen inside the transaction.
                 // ------------------------------------------------
+
+                const item =
+                    await tx.orderItem.findFirst({
+                        where: {
+                            id: itemId,
+
+                            orderId,
+
+                            order: {
+                                userId,
+                            },
+                        },
+
+                        select: {
+                            id: true,
+                            price: true,
+                            remainingQuantity: true,
+                            productVariantId: true,
+
+                            order: {
+                                select: {
+                                    status: true,
+                                },
+                            },
+                        },
+                    });
+
+                if (!item) {
+                    throw new AppError(
+                        "Order item not found",
+                        404
+                    );
+                }
+
+                if (
+                    item.order.status !==
+                        "PENDING" &&
+                    item.order.status !==
+                        "CONFIRMED"
+                ) {
+                    throw new AppError(
+                        `Items can only be cancelled while the order is PENDING or CONFIRMED. Current status: ${item.order.status}`,
+                        400
+                    );
+                }
+
+                if (
+                    quantity >
+                    item.remainingQuantity
+                ) {
+                    throw new AppError(
+                        `Cannot cancel ${quantity} unit(s); only ${item.remainingQuantity} remain active`,
+                        409
+                    );
+                }
+
+                const cancellationAmount =
+                    item.price.mul(quantity);
 
                 const currentOrder =
                     await tx.order.findUnique({
@@ -586,7 +583,14 @@ export async function cancelOrderItem(
                         select: {
                             subtotal: true,
                             couponDiscount: true,
-                            total: true,
+                            cancelledAmount: true,
+
+                            items: {
+                                select: {
+                                    price: true,
+                                    cancelledQuantity: true,
+                                },
+                            },
                         },
                     });
 
@@ -657,18 +661,26 @@ export async function cancelOrderItem(
 
 
 
-                const couponDiscountPortion =
-                    calculateCouponDiscountPortion(
+                const {
+                    netCancellationAmount,
+                } = calculateCancellationAmounts({
+                    subtotal:
                         currentOrder.subtotal,
+
+                    couponDiscount:
                         currentOrder.couponDiscount,
-                        cancellationAmount
-                    );
 
+                    grossCancelledBefore:
+                        sumGrossCancelled(
+                            currentOrder.items
+                        ),
 
-                const netCancellationAmount =
-                    cancellationAmount.sub(
-                        couponDiscountPortion
-                    );
+                    netCancelledBefore:
+                        currentOrder.cancelledAmount,
+
+                    grossCancelledNow:
+                        cancellationAmount,
+                });
 
 
 
@@ -684,60 +696,29 @@ export async function cancelOrderItem(
                     });
 
 
-                if (remainingActive === 0) {
-                    await tx.order.update({
-                        where: {
-                            id: orderId,
-                        },
+                await tx.order.update({
+                    where: {
+                        id: orderId,
+                    },
 
-                        data: {
+                    data: {
+                        ...(remainingActive ===
+                            0 && {
                             status: "CANCELLED",
+                        }),
 
-                            cancelledAmount: {
-                                increment:
-                                    cancellationAmount,
-                            },
-
-                            subtotal:
-                                new Prisma.Decimal(0),
-
-                            couponDiscount:
-                                new Prisma.Decimal(0),
-
-                            total:
-                                new Prisma.Decimal(0),
+                        cancelledAmount: {
+                            increment:
+                                netCancellationAmount,
                         },
-                    });
-                } else {
+                    },
+                });
 
-
-                    await tx.order.update({
-                        where: {
-                            id: orderId,
-                        },
-
-                        data: {
-                            cancelledAmount: {
-                                increment:
-                                    cancellationAmount,
-                            },
-
-                            subtotal: {
-                                decrement:
-                                    cancellationAmount,
-                            },
-
-                            couponDiscount: {
-                                decrement:
-                                    couponDiscountPortion,
-                            },
-
-                            total: {
-                                decrement:
-                                    netCancellationAmount,
-                            },
-                        },
-                    });
+                if (remainingActive === 0) {
+                    await releaseCouponClaimForOrder(
+                        tx,
+                        orderId
+                    );
                 }
 
 
@@ -749,12 +730,20 @@ export async function cancelOrderItem(
                     select:
                         orderItemMutationSelect,
                 });
-            }
+            },
+            CANCELLATION_TRANSACTION_OPTIONS
+            )
         );
     } catch (err) {
 
 
         if (isIdempotencyConflict(err)) {
+            await issueRefundAfterCancellation(
+                orderId,
+                idempotencyKey,
+                reason
+            );
+
             return prisma.orderItem.findUniqueOrThrow({
                 where: {
                     id: itemId,
@@ -767,6 +756,14 @@ export async function cancelOrderItem(
 
         throw err;
     }
+
+    await issueRefundAfterCancellation(
+        orderId,
+        idempotencyKey,
+        reason
+    );
+
+    return result;
 }
 
 
@@ -916,6 +913,11 @@ export async function verifyPayment(
                 id: orderId,
                 userId,
             },
+
+            select: {
+                paymentMethod: true,
+                razorpayOrderId: true,
+            },
         });
 
     if (!order) {
@@ -924,15 +926,6 @@ export async function verifyPayment(
             404
         );
     }
-
-
-    if (
-        order.paymentStatus === "PAID"
-    ) {
-        return order;
-    }
-
-
 
     if (
         order.paymentMethod !== "ONLINE"
@@ -950,104 +943,10 @@ export async function verifyPayment(
         );
     }
 
-
-    const secret =
-        process.env.RAZORPAY_KEY_SECRET;
-
-    if (!secret) {
-        throw new AppError(
-            "Payment configuration error",
-            500
-        );
-    }
-
-
-    const generatedSignature =
-        crypto
-            .createHmac(
-                "sha256",
-                secret
-            )
-            .update(
-                `${order.razorpayOrderId}|${razorpayPaymentId}`
-            )
-            .digest("hex");
-
-    const generatedBuffer =
-        Buffer.from(
-            generatedSignature,
-            "utf8"
-        );
-
-    const receivedBuffer =
-        Buffer.from(
-            razorpaySignature,
-            "utf8"
-        );
-
-    if (
-        generatedBuffer.length !==
-            receivedBuffer.length ||
-        !crypto.timingSafeEqual(
-            generatedBuffer,
-            receivedBuffer
-        )
-    ) {
-        throw new AppError(
-            "Payment verification failed",
-            400
-        );
-    }
-
-    const updatedOrder =
-        await prisma.$transaction(
-            async (tx) => {
-                const currentOrder =
-                    await tx.order.findUnique({
-                        where: {
-                            id: orderId,
-                        },
-
-                        select: {
-                            id: true,
-                            paymentStatus: true,
-                        },
-                    });
-
-                if (!currentOrder) {
-                    throw new AppError(
-                        "Order not found",
-                        404
-                    );
-                }
-
-
-                if (
-                    currentOrder.paymentStatus ===
-                    "PAID"
-                ) {
-                    return tx.order.findUnique({
-                        where: {
-                            id: orderId,
-                        },
-                    });
-                }
-
-                return tx.order.update({
-                    where: {
-                        id: orderId,
-                    },
-
-                    data: {
-                        paymentStatus: "PAID",
-                        status: "CONFIRMED",
-
-                        razorpayPaymentId,
-                        razorpaySignature,
-                    },
-                });
-            }
-        );
-
-    return updatedOrder;
+    return checkoutService.verifyPayment(
+        userId,
+        order.razorpayOrderId,
+        razorpayPaymentId,
+        razorpaySignature
+    );
 }
