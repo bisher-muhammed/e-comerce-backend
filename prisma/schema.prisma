@@ -256,7 +256,8 @@ lastName String?
 phone String
 
 addressLine1 String
-addressLine2 String?
+addressLine2 String
+landmark String?
 
 city String
 state String
@@ -293,7 +294,8 @@ shippingFirstName String
 shippingLastName String?
 shippingPhone String
 shippingLine1 String
-shippingLine2 String?
+shippingLine2 String
+shippingLandmark String?
 shippingCity String
 shippingState String
 shippingPostalCode String
