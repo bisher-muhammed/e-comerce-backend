@@ -18,9 +18,14 @@ export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 export const REFRESH_TOKEN_TTL_SECONDS =
   7 * 24 * 60 * 60;
 
+export type AuthScope = "storefront" | "admin";
+
+export type UserRole = "CUSTOMER" | "ADMIN" | "SUPER_ADMIN";
+
 export interface AccessTokenPayload {
   userId: number;
-  role: "CUSTOMER" | "ADMIN" | "SUPER_ADMIN";
+  role: UserRole;
+  scope: AuthScope;
 }
 
 export interface RefreshTokenPayload
@@ -66,6 +71,21 @@ const assertTokenType = <T>(
   return payload;
 };
 
+const assertTokenScope = <
+  T extends { scope: AuthScope }
+>(
+  payload: T,
+  expected: AuthScope
+): T => {
+  if (payload.scope !== expected) {
+    throw new jwt.JsonWebTokenError(
+      "Unexpected token scope"
+    );
+  }
+
+  return payload;
+};
+
 export const generateAccessToken = (
   payload: AccessTokenPayload
 ) => {
@@ -87,7 +107,8 @@ export const generateRefreshToken = (
 };
 
 export const verifyAccessToken = (
-  token: string
+  token: string,
+  expectedScope: AuthScope
 ): AccessTokenPayload => {
   const payload = jwt.verify(
     token,
@@ -95,14 +116,15 @@ export const verifyAccessToken = (
     verifyOptions(false)
   ) as SignedPayload<AccessTokenPayload>;
 
-  return assertTokenType(
-    payload,
-    ACCESS_TOKEN_TYPE
+  return assertTokenScope(
+    assertTokenType(payload, ACCESS_TOKEN_TYPE),
+    expectedScope
   );
 };
 
 export const verifyRefreshToken = (
   token: string,
+  expectedScope: AuthScope,
   options: { ignoreExpiration?: boolean } = {}
 ): RefreshTokenPayload => {
   const payload = jwt.verify(
@@ -111,8 +133,8 @@ export const verifyRefreshToken = (
     verifyOptions(options.ignoreExpiration ?? false)
   ) as SignedPayload<RefreshTokenPayload>;
 
-  return assertTokenType(
-    payload,
-    REFRESH_TOKEN_TYPE
+  return assertTokenScope(
+    assertTokenType(payload, REFRESH_TOKEN_TYPE),
+    expectedScope
   );
 };

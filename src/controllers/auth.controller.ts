@@ -8,7 +8,8 @@ import { refreshAccessToken } from "../services/auth/refresh.service";
 import { logoutUser } from "../services/auth/logout.service";
 import prisma from "../config/prisma";
 import AppError from "../errors/AppError";
-import { accessTokenCookieOptions, clearAccessTokenCookieOptions, clearLegacyRefreshTokenCookieOptions, clearRefreshTokenCookieOptions, clearRegistrationTokenCookieOptions, refreshTokenCookieOptions, REGISTRATION_TOKEN_COOKIE, registrationTokenCookieOptions, } from "../utils/auth-cookie.util";
+import { accessTokenCookieName, accessTokenCookieOptions, clearAccessTokenCookieOptions, clearLegacyRefreshTokenCookieOptions, clearRefreshTokenCookieOptions, clearRegistrationTokenCookieOptions, refreshTokenCookieName, refreshTokenCookieOptions, REGISTRATION_TOKEN_COOKIE, registrationTokenCookieOptions, } from "../utils/auth-cookie.util";
+import type { AuthScope } from "../utils/jwt";
 
 
 const requireRegistrationToken = (req: Request) => {
@@ -105,24 +106,24 @@ export const resendOtp = async (
   }
 };
 
-export const login = async (
+const createLogin = (scope: AuthScope) => async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const result = await loginUser(req.body);
+    const result = await loginUser(req.body, scope);
 
     res.cookie(
-      "access_token",
+      accessTokenCookieName(scope),
       result.accessToken,
-      accessTokenCookieOptions
+      accessTokenCookieOptions(scope)
     );
 
     res.cookie(
-      "refresh_token",
+      refreshTokenCookieName(scope),
       result.refreshToken,
-      refreshTokenCookieOptions
+      refreshTokenCookieOptions(scope)
     );
 
     return res.status(200).json({
@@ -137,29 +138,37 @@ export const login = async (
   }
 };
 
-export const logout = async (
+export const login = createLogin("storefront");
+
+export const adminLogin = createLogin("admin");
+
+const createLogout = (scope: AuthScope) => async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
+    const refreshCookie = refreshTokenCookieName(scope);
+
     res.clearCookie(
-      "access_token",
-      clearAccessTokenCookieOptions
+      accessTokenCookieName(scope),
+      clearAccessTokenCookieOptions(scope)
     );
 
     res.clearCookie(
-      "refresh_token",
-      clearRefreshTokenCookieOptions
+      refreshCookie,
+      clearRefreshTokenCookieOptions(scope)
     );
 
-    res.clearCookie(
-      "refresh_token",
-      clearLegacyRefreshTokenCookieOptions
-    );
+    if (scope === "storefront") {
+      res.clearCookie(
+        refreshCookie,
+        clearLegacyRefreshTokenCookieOptions
+      );
+    }
 
     // Cleared first so the browser is disarmed even if this fails
-    await logoutUser(req.cookies.refresh_token);
+    await logoutUser(req.cookies[refreshCookie], scope);
 
     return res.status(200).json({
       success: true,
@@ -169,6 +178,10 @@ export const logout = async (
     next(error);
   }
 };
+
+export const logout = createLogout("storefront");
+
+export const adminLogout = createLogout("admin");
 
 
 export const getMe = async (
@@ -211,31 +224,35 @@ export const getMe = async (
 };
 
 
-export const refreshToken = async (
+const createRefreshToken = (scope: AuthScope) => async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const refreshToken = req.cookies.refresh_token;
+    const refreshToken =
+      req.cookies[refreshTokenCookieName(scope)];
 
     if (!refreshToken) {
       throw new AppError("Refresh token missing", 401);
     }
 
-    const result = await refreshAccessToken(refreshToken);
+    const result = await refreshAccessToken(
+      refreshToken,
+      scope
+    );
 
     res.cookie(
-      "access_token",
+      accessTokenCookieName(scope),
       result.accessToken,
-      accessTokenCookieOptions
+      accessTokenCookieOptions(scope)
     );
 
     // Rotated on every refresh — the cookie has to move with it
     res.cookie(
-      "refresh_token",
+      refreshTokenCookieName(scope),
       result.refreshToken,
-      refreshTokenCookieOptions
+      refreshTokenCookieOptions(scope)
     );
 
     return res.status(200).json({
@@ -246,3 +263,7 @@ export const refreshToken = async (
     next(error);
   }
 };
+
+export const refreshToken = createRefreshToken("storefront");
+
+export const adminRefreshToken = createRefreshToken("admin");

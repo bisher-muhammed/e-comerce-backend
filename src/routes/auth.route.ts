@@ -1,7 +1,10 @@
 import { Router } from "express";
 
 import { validate } from "../middlewares/validate.middleware";
-import { authenticate } from "../middlewares/auth.middleware";
+import {
+  authenticate,
+  authenticateAdmin,
+} from "../middlewares/auth.middleware";
 
 import {
   loginLimiter,
@@ -25,11 +28,35 @@ import {
   login,
   logout,
   getMe,
-  refreshToken
+  refreshToken,
+  adminLogin,
+  adminLogout,
+  adminRefreshToken
 
 } from "../controllers/auth.controller";
 
 const router = Router();
+
+const adminRouter = Router();
+
+adminRouter.get("/me", authenticateAdmin, getMe);
+
+adminRouter.post(
+  "/login",
+  ...loginLimiter,
+  validate({ body: loginSchema }),
+  adminLogin
+);
+
+adminRouter.post("/logout", adminLogout);
+
+adminRouter.post(
+  "/refresh-token",
+  refreshTokenLimiter,
+  adminRefreshToken
+);
+
+router.use("/admin", adminRouter);
 
 
 router.get("/me", authenticate,getMe);

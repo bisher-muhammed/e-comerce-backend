@@ -1,10 +1,11 @@
 import jwt from "jsonwebtoken";
 
-import { verifyRefreshToken } from "../../utils/jwt";
+import { verifyRefreshToken, type AuthScope } from "../../utils/jwt";
 import { revokeRefreshSession } from "./refresh-session.service";
 
 export const logoutUser = async (
-  token: string | undefined
+  token: string | undefined,
+  scope: AuthScope
 ) => {
   if (!token) {
     return;
@@ -14,7 +15,7 @@ export const logoutUser = async (
   let userId: number;
 
   try {
-    const decoded = verifyRefreshToken(token, {
+    const decoded = verifyRefreshToken(token, scope, {
       ignoreExpiration: true,
     });
 
