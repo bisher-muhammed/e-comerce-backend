@@ -17,6 +17,7 @@ import customerRouters from "./routes/admin/customer.route";
 import ordersRouters from "./routes/admin/order.route";
 import couponRouters from "./routes/admin/coupon.route";
 import couponRouter from "./routes/customer/coupon.route";
+import offerRouter from "./routes/admin/offer.route";
 import cors from "cors";
 import errorMiddleware from "./middlewares/error.middleware";
 import { globalLimiter } from "./middlewares/rate-limit.middleware";
@@ -59,6 +60,7 @@ app.use("/api/v1/admin/customers", customerRouters);
 app.use("/api/v1/admin/orders",ordersRouters);
 app.use("/api/v1/admin/coupons",couponRouters);
 app.use("/api/v1/customer/coupons",couponRouter)
+app.use("/api/v1/admin/offers",offerRouter)
 
 
 
