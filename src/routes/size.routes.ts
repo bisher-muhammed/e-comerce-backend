@@ -23,11 +23,6 @@ const router = Router();
 router.use(authenticate);
 router.use(authorize("SUPER_ADMIN", "ADMIN"));
 
-router.use((req, res, next) => {
-  console.log("SIZE ROUTER HIT:", req.method, req.originalUrl);
-  next();
-});
-
 router.post(
   "/",
   validate({ body: createSizeSchema }),

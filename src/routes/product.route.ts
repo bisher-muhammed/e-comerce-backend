@@ -18,7 +18,9 @@ import {
 } from "../validations/product.validation";
 
 import {
+  MAX_PRODUCT_IMAGE_FILES,
   productImageUpload,
+  verifyImageContents,
 } from "../middlewares/upload.middleware";
 
 const router = Router();
@@ -30,7 +32,11 @@ router.use(authorize("SUPER_ADMIN", "ADMIN"));
 
 router.post(
   "/",
-  productImageUpload.array("images", 200),
+  productImageUpload.array(
+    "images",
+    MAX_PRODUCT_IMAGE_FILES
+  ),
+  verifyImageContents,
   create
 );
 
@@ -58,7 +64,11 @@ router.patch(
   validate({
     params: productIdSchema,
   }),
-  productImageUpload.array("images", 200),
+  productImageUpload.array(
+    "images",
+    MAX_PRODUCT_IMAGE_FILES
+  ),
+  verifyImageContents,
   update
 );
 

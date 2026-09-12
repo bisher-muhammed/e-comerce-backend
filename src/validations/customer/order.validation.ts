@@ -1,8 +1,27 @@
 import { z } from "zod";
 
+import {
+    isValidDateInput,
+    toDayBoundary,
+} from "../../utils/date-range.util";
+
 // ============================================================
 // COMMON
 // ============================================================
+
+const dayBoundarySchema = (
+    edge: "start" | "end"
+) =>
+    z
+        .string()
+        .trim()
+        .min(1)
+        .refine(isValidDateInput, {
+            message: "Invalid date",
+        })
+        .transform((value) =>
+            toDayBoundary(value, edge)
+        );
 
 const idempotencyBodySchema = z.object({
     idempotencyKey: z
@@ -78,9 +97,9 @@ export const listOrdersSchema = z
             .enum(["createdAt", "updatedAt"])
             .default("createdAt"),
 
-        startDate: z.coerce.date().optional(),
+        startDate: dayBoundarySchema("start").optional(),
 
-        endDate: z.coerce.date().optional(),
+        endDate: dayBoundarySchema("end").optional(),
     })
     .refine(
         (data) =>

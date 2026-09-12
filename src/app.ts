@@ -17,24 +17,49 @@ import customerRouters from "./routes/admin/customer.route";
 import ordersRouters from "./routes/admin/order.route";
 import couponRouters from "./routes/admin/coupon.route";
 import couponRouter from "./routes/customer/coupon.route";
+import webhookRouter from "./routes/webhook.route";
 import cors from "cors";
+import helmet from "helmet";
+import compression from "compression";
 import errorMiddleware from "./middlewares/error.middleware";
 import { globalLimiter } from "./middlewares/rate-limit.middleware";
 import { resolveTrustProxy } from "./utils/trust-proxy.util";
+import {
+  isOriginAllowed,
+  resolveAllowedOrigins,
+} from "./utils/cors-origin.util";
 
 import cookieParser from "cookie-parser";
 const app = express();
 
+const allowedOrigins = resolveAllowedOrigins(
+  process.env.CORS_ORIGINS
+);
+
+app.disable("x-powered-by");
+
 app.set("trust proxy", resolveTrustProxy(process.env.TRUST_PROXY));
+
+app.use(helmet());
+
+app.use(compression());
 
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: (origin, callback) => {
+      if (isOriginAllowed(origin, allowedOrigins)) {
+        return callback(null, true);
+      }
+
+      return callback(null, false);
+    },
     credentials: true,
   })
 );
 
-app.use(express.json());
+app.use("/api/v1/webhooks", webhookRouter);
+
+app.use(express.json({ limit: "100kb" }));
 app.use(cookieParser())
 
 app.use("/api/v1/health", healthRouter);
@@ -59,16 +84,6 @@ app.use("/api/v1/admin/customers", customerRouters);
 app.use("/api/v1/admin/orders",ordersRouters);
 app.use("/api/v1/admin/coupons",couponRouters);
 app.use("/api/v1/customer/coupons",couponRouter)
-
-
-
-
-
-
-
-
-
-
 
 app.use(errorMiddleware)
 export default app;

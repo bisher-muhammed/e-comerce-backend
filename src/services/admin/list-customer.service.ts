@@ -2,6 +2,7 @@ import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
 import { UserStatus} from "../../../generated/prisma/enums";
 import { revokeAllRefreshSessions } from "../auth/refresh-session.service";
+import { invalidateAuthenticatedUser } from "../../utils/auth-user-cache.util";
 
 interface ListCustomersParams {
   search?: string;
@@ -175,6 +176,10 @@ export const updateCustomerStatus = async (
       updatedAt: true,
     },
   });
+
+  await invalidateAuthenticatedUser(
+    updatedCustomer.id
+  );
 
   if (updatedCustomer.status !== "ACTIVE") {
     await revokeAllRefreshSessions(updatedCustomer.id);

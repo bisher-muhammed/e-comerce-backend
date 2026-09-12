@@ -10,36 +10,7 @@
 ## 0. Blockers — broken right now
 ## 1. CRITICAL
 ## 2. HIGH
-
----
-
 ## 3. MEDIUM
-
-| # | Finding | Location |
-|---|---|---|
-| M1 | **`helmet` installed but never mounted.** `package.json` lists it; `grep -rn "helmet" src/` → nothing. No HSTS, no `X-Content-Type-Options`, no frameguard, no CSP; `X-Powered-By: Express` still advertised. One line to fix. | [`app.ts`](src/app.ts) |
-| M2 | **Error handler leaks internals.** Returns raw `error.message` for unexpected errors — Prisma messages carry model names, field names, constraint names. Combined with M4, an attacker can map your schema by feeding bad IDs. | [`error.middleware.ts:34-39`](src/middlewares/error.middleware.ts#L34-L39) |
-| M3 | **Access tokens and plaintext OTPs written to logs.** `console.log("COOKIES:", req.cookies)` logs the raw JWT on **every authenticated request**; `authorize.middleware.ts:26-28` logs the full user object. (The plaintext-OTP log is now gated to non-production in `otp.service.ts`.) Anyone with log access can impersonate any user. | [`auth.middleware.ts:15`](src/middlewares/auth.middleware.ts#L15) +4 |
-| M4 | **`PATCH /admin/customers/:id/status` has zero body validation.** `const { status } = req.body` goes straight into `prisma.user.update`. A `listCustomersSchema` exists but no `updateCustomerStatusSchema`. Not privilege escalation (only `status` is written) but it's the one mutating route with no validation. | [`admin/customer.route.ts:36-41`](src/routes/admin/customer.route.ts#L36-L41) |
-| M5 | **No Razorpay webhook.** `grep -rni "webhook" src/` → nothing. Payment state depends entirely on the browser calling back. User closes the tab after paying → money captured at Razorpay, order `PENDING` forever. No reconciliation for later refunds or disputes. | (missing) |
-| M6 | **Payment accepted without confirming capture.** Signature is validated but `razorpay.payments.fetch()` is never called. If the account isn't on auto-capture, a payment can be `authorized` but never `captured` — signature still valid, DB records `PAID`, authorization voids in ~5 days. You ship for money never collected. | [`checkout.service.ts:1273`](src/services/customer/checkout.service.ts#L1273) |
-| M7 | **Default 10-connection pool.** `new PrismaPg({ connectionString })` with no `max`. `pg.Pool` defaults to 10. Each checkout holds one for the duration of a Serializable transaction — ~10 concurrent checkouts and everything else queues then fails with P2024. | [`config/prisma.ts:5-11`](src/config/prisma.ts#L5-L11) |
-| M8 | **No graceful shutdown.** No `SIGTERM`/`SIGINT` handler, no `$disconnect()`, and `app.listen`'s return value isn't even captured. Rolling deploys kill in-flight transactions and orphan DB backends. | [`server.ts`](src/server.ts) |
-| M9 | **No compression.** Not in `package.json`. Given C5's multi-MB payloads, gzip is the cheapest single win available. | [`app.ts`](src/app.ts) |
-| M10 | **Uploads buffer ~1 GB in RAM.** `memoryStorage()` with `files: 200` × `fileSize: 5MB`, all held simultaneously then uploaded concurrently. Two concurrent admin requests OOM the process. MIME type is also taken from the client-supplied header with no magic-byte check. | [`upload.middleware.ts:16,42-45`](src/middlewares/upload.middleware.ts#L16) |
-| M11 | **SMTP awaited inline during register/resend.** Response time = argon2 hash + 2 Redis writes + a full SMTP handshake (300ms–3s, unbounded). If SMTP fails the **registration fails entirely** despite the Redis session already being written — user gets a 500 and a dangling token. Transporter has no `pool: true`, so every OTP opens a fresh TCP+TLS+AUTH connection. | [`otp.service.ts`](src/services/auth/otp.service.ts) |
-| M12 | **JWT algorithm not pinned.** `jwt.verify(token, SECRET)` with no `{ algorithms: ["HS256"] }`, no issuer/audience. jsonwebtoken v9 rejects `alg: none`, so not directly exploitable — but access and refresh tokens carry an **identical payload shape with no `typ` claim**, separated only by the two secrets differing. Set them to the same value by accident and the tokens become interchangeable. | [`jwt.ts:30-33,39-42`](src/utils/jwt.ts#L30-L33) |
-| M13 | **Money computed in JS floats.** Columns are `Decimal(10,2)` (correct), but `subtotal` and discount arithmetic uses `Number` + `toFixed(2)`. `Prisma.Decimal` is already used properly in `customer/order.service.ts:19-42`. Latent rather than demonstrated — no reproducible off-by-a-paisa case found — but free to remove. | [`checkout.service.ts:418-426`](src/services/customer/checkout.service.ts#L418-L426) |
-| M14 | **`endDate` filter excludes the requested day.** `z.coerce.date()` on `"2026-01-15"` yields UTC midnight; with `lte`, every order placed that day is excluded. For IST users the window is additionally shifted 5h30m. | [`customer/order.validation.ts:23-24`](src/validations/customer/order.validation.ts#L23-L24) |
-| M15 | **A FIXED coupon with no minimum makes any order free.** `minimumOrderAmount` defaults to 0 and the FIXED branch does `Math.min(discountValue, subtotal)`. "₹500 OFF" with no minimum → a ₹499 item costs **₹0**, and for COD the order is created `CONFIRMED` and ships. | [`admin/coupon.validation.ts:60`](src/validations/admin/coupon.validation.ts#L60) |
-| M16 | **Cart has no price snapshot; totals computed twice.** `CartItem` stores only `quantity`, so `getCart` returns no total and the frontend sums it — while the server computes its own independently at checkout. If an admin edits a price in between, the displayed and charged amounts differ silently. `OrderItem` already snapshots correctly. | [`schema.prisma:195-214`](prisma/schema.prisma#L195-L214) |
-| M17 | **`addToCart` is a 4-round-trip read-then-write with no transaction.** Stock is checked against a stale read; two concurrent adds both pass. Not an oversell (checkout catches it) but the user gets a cart that fails at payment. Hottest write endpoint in the app. | [`cart.service.ts:9-57`](src/services/customer/cart.service.ts#L9-L57) |
-| M18 | **Redis caches nothing but OTPs.** All 11 call sites are in `config/redis.ts` and the three auth services. High-value targets: product listing/detail, categories, sizes, colours, and the per-request `User` lookup in `authenticate` (M19). Never cache `stock`. | — |
-| M19 | **`authenticate` does a DB round trip on every request.** Correct for security (catches suspended accounts immediately) but the #1 caching candidate — a 60s TTL would cut it dramatically. | [`auth.middleware.ts:27-39`](src/middlewares/auth.middleware.ts#L27-L39) |
-| M20 | **CORS hardcoded to a dev origin.** `origin: "http://localhost:3000"` — safe as written (not a wildcard, no reflection) but will break in production, inviting someone to "fix" it by reflecting `req.headers.origin`. | [`app.ts:25-30`](src/app.ts#L25-L30) |
-| M21 | **Live third-party secrets in plaintext on disk, no `.env.example`.** `.env` holds real Resend, Gmail app-password, Cloudinary, Razorpay, JWT, and super-admin values. History is clean, but anything pasted into a chat or screen share should be treated as burned. Rotate before going live. | `.env` |
-
----
 
 ## 4. LOW
 

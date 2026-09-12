@@ -6,7 +6,11 @@ import {
   getCustomerById,
   updateCustomerStatus,
 } from "../../services/admin/list-customer.service";
-import {listCustomersSchema} from "../../validations/admin/listcustomer.validation";
+import {
+  customerIdSchema,
+  listCustomersSchema,
+  updateCustomerStatusSchema,
+} from "../../validations/admin/listcustomer.validation";
 
 
 export const listCustomersController = async (
@@ -44,7 +48,9 @@ export const getCustomerByIdController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = customerIdSchema.parse(
+      req.params
+    );
 
     const customer = await getCustomerById(id);
 
@@ -64,9 +70,12 @@ export const updateCustomerStatusController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = customerIdSchema.parse(
+      req.params
+    );
 
-    const { status } = req.body;
+    const { status } =
+      updateCustomerStatusSchema.parse(req.body);
 
     const customer = await updateCustomerStatus(
       id,

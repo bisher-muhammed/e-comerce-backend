@@ -202,6 +202,8 @@ productVariant ProductVariant @relation(fields: [productVariantId], references: 
 
 quantity Int @default(1)
 
+priceSnapshot Decimal @db.Decimal(10, 2)
+
 createdAt DateTime @default(now())
 updatedAt DateTime @updatedAt
 

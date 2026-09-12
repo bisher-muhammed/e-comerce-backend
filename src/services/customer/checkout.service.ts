@@ -2,6 +2,7 @@ import crypto from "crypto";
 
 import prisma from "../../config/prisma";
 import razorpay from "../../config/razorpay";
+import type { Payments } from "razorpay/dist/types/payments";
 
 import AppError from "../../errors/AppError";
 
@@ -25,8 +26,21 @@ import {
   releaseStock,
 } from "../../utils/stock.util";
 
+import { syncCartPriceSnapshots } from "./cart.service";
+
 const ONLINE_PAYMENT_WINDOW_MS =
   15 * 60 * 1000;
+
+const ZERO = new Prisma.Decimal(0);
+
+export function toPaise(
+  amount: Prisma.Decimal
+): number {
+  return amount
+    .mul(100)
+    .toDecimalPlaces(0)
+    .toNumber();
+}
 
 // ============================================================
 // CART
@@ -109,20 +123,15 @@ function calculateCouponDiscount(
     minimumOrderAmount: Prisma.Decimal;
     maximumDiscountAmount: Prisma.Decimal | null;
   },
-  subtotal: number
-): number {
-  const minimumOrderAmount =
-    Number(coupon.minimumOrderAmount);
+  subtotal: Prisma.Decimal
+): Prisma.Decimal {
+  const {
+    minimumOrderAmount,
+    discountValue,
+    maximumDiscountAmount,
+  } = coupon;
 
-  const discountValue =
-    Number(coupon.discountValue);
-
-  const maximumDiscountAmount =
-    coupon.maximumDiscountAmount !== null
-      ? Number(coupon.maximumDiscountAmount)
-      : null;
-
-  if (subtotal < minimumOrderAmount) {
+  if (subtotal.lt(minimumOrderAmount)) {
     throw new AppError(
       `Minimum order amount is ₹${minimumOrderAmount.toFixed(
         2
@@ -131,39 +140,42 @@ function calculateCouponDiscount(
     );
   }
 
-  let discountAmount: number;
+  let discountAmount: Prisma.Decimal;
 
   if (
     coupon.discountType ===
     CouponDiscountType.PERCENTAGE
   ) {
-    discountAmount =
-      (subtotal * discountValue) / 100;
+    discountAmount = subtotal
+      .mul(discountValue)
+      .div(100)
+      .toDecimalPlaces(2);
 
     if (
       maximumDiscountAmount !== null
     ) {
-      discountAmount = Math.min(
+      discountAmount = Prisma.Decimal.min(
         discountAmount,
         maximumDiscountAmount
       );
     }
   } else {
-    discountAmount = Math.min(
+    discountAmount = Prisma.Decimal.min(
       discountValue,
       subtotal
     );
   }
 
 
-  discountAmount = Math.min(
+  discountAmount = Prisma.Decimal.min(
     discountAmount,
     subtotal
   );
 
-  return Number(
-    discountAmount.toFixed(2)
-  );
+  return Prisma.Decimal.max(
+    discountAmount,
+    ZERO
+  ).toDecimalPlaces(2);
 }
 
 
@@ -171,10 +183,10 @@ async function getCheckoutCoupon(
   tx: TransactionClient,
   userId: number,
   couponCode: string | undefined,
-  subtotal: number
+  subtotal: Prisma.Decimal
 ): Promise<{
   couponCode: string | null;
-  couponDiscount: number;
+  couponDiscount: Prisma.Decimal;
   couponId: number | null;
   couponClaimId: number | null;
 }> {
@@ -184,7 +196,7 @@ async function getCheckoutCoupon(
   if (!couponCode) {
     return {
       couponCode: null,
-      couponDiscount: 0,
+      couponDiscount: ZERO,
       couponId: null,
       couponClaimId: null,
     };
@@ -327,7 +339,7 @@ function buildOrderItemsData(
     productVariantId: number;
     quantity: number;
     productVariant: {
-      price: any;
+      price: Prisma.Decimal;
       size: {
         name: string;
       };
@@ -400,19 +412,21 @@ function calculateSubtotal(
   items: Array<{
     quantity: number;
     productVariant: {
-      price: any;
+      price: Prisma.Decimal;
     };
   }>
-): number {
-  const subtotal = items.reduce(
-    (sum, item) =>
-      sum +
-      Number(item.productVariant.price) *
-        item.quantity,
-    0
-  );
-
-  return Number(subtotal.toFixed(2));
+): Prisma.Decimal {
+  return items
+    .reduce(
+      (sum, item) =>
+        sum.add(
+          item.productVariant.price.mul(
+            item.quantity
+          )
+        ),
+      ZERO
+    )
+    .toDecimalPlaces(2);
 }
 
 function createShippingSnapshot(
@@ -650,12 +664,10 @@ async function runCodCheckout(
       subtotal
     );
 
-  const total = Number(
-    (
-      subtotal -
-      coupon.couponDiscount
-    ).toFixed(2)
-  );
+  const total = Prisma.Decimal.max(
+    subtotal.sub(coupon.couponDiscount),
+    ZERO
+  ).toDecimalPlaces(2);
 
   /*
    * Reserve stock.
@@ -818,12 +830,10 @@ async function runOnlinePendingOrderCreation(
     );
 
 
-  const total = Number(
-    (
-      subtotal -
-      coupon.couponDiscount
-    ).toFixed(2)
-  );
+  const total = Prisma.Decimal.max(
+    subtotal.sub(coupon.couponDiscount),
+    ZERO
+  ).toDecimalPlaces(2);
 
   /*
    * Reserve stock.
@@ -911,7 +921,7 @@ async function runOnlinePendingOrderCreation(
 function buildOnlineResponse(
   order: {
     razorpayOrderId: string | null;
-    total: any;
+    total: Prisma.Decimal;
   }
 ) {
   if (!order.razorpayOrderId) {
@@ -926,9 +936,7 @@ function buildOnlineResponse(
       orderId:
         order.razorpayOrderId,
 
-      amount: Math.round(
-        Number(order.total) * 100
-      ),
+      amount: toPaise(order.total),
 
       currency: "INR",
 
@@ -1066,9 +1074,8 @@ async function runOnlineCheckout(
     razorpayOrder =
       await razorpay.orders.create({
 
-        amount: Math.round(
-          Number(pendingOrder.total) *
-            100
+        amount: toPaise(
+          pendingOrder.total
         ),
 
         currency: "INR",
@@ -1214,6 +1221,16 @@ export const createCheckout = async (
     );
   }
 
+  const repricedItems =
+    await syncCartPriceSnapshots(userId);
+
+  if (repricedItems > 0) {
+    throw new AppError(
+      "Prices in your cart have changed. Please review your cart before continuing.",
+      409
+    );
+  }
+
   const shippingSnapshot =
     createShippingSnapshot(address);
 
@@ -1296,6 +1313,187 @@ export const createCheckout = async (
   });
 };
 
+
+
+export const ensurePaymentCaptured = async (
+  razorpayOrderId: string,
+  razorpayPaymentId: string,
+  expectedAmountInPaise: number
+) => {
+  let payment: Payments.RazorpayPayment;
+
+  try {
+    payment = await razorpay.payments.fetch(
+      razorpayPaymentId
+    );
+  } catch (error) {
+    console.error(
+      `Unable to fetch Razorpay payment ${razorpayPaymentId}`,
+      error
+    );
+
+    throw new AppError(
+      "Unable to confirm this payment with the payment provider. Please try again.",
+      502
+    );
+  }
+
+  if (payment.order_id !== razorpayOrderId) {
+    throw new AppError(
+      "Payment verification failed",
+      400
+    );
+  }
+
+  if (payment.status === "failed") {
+    throw new AppError(
+      "This payment did not succeed",
+      402
+    );
+  }
+
+  if (
+    Number(payment.amount) <
+    expectedAmountInPaise
+  ) {
+    throw new AppError(
+      "Payment amount does not match the order total",
+      400
+    );
+  }
+
+  if (payment.status === "authorized") {
+    try {
+      payment = await razorpay.payments.capture(
+        razorpayPaymentId,
+        payment.amount,
+        payment.currency
+      );
+    } catch (error) {
+      console.error(
+        `Unable to capture Razorpay payment ${razorpayPaymentId}`,
+        error
+      );
+
+      payment = await razorpay.payments
+        .fetch(razorpayPaymentId)
+        .catch(() => payment);
+    }
+  }
+
+  if (payment.status !== "captured") {
+    throw new AppError(
+      "This payment has not been captured yet. Please try again or contact support.",
+      409
+    );
+  }
+
+  return payment;
+};
+
+
+export const confirmOrderPayment = async (params: {
+  orderId: number;
+  razorpayPaymentId: string;
+  razorpaySignature?: string | null;
+  enforceExpiry: boolean;
+}) => {
+  const {
+    orderId,
+    razorpayPaymentId,
+    razorpaySignature,
+    enforceExpiry,
+  } = params;
+
+  return withTransactionRetry(
+    () =>
+      prisma.$transaction(
+        async (tx) => {
+          const currentOrder =
+            await tx.order.findUnique({
+              where: {
+                id: orderId,
+              },
+
+              include: {
+                items: true,
+              },
+            });
+
+          if (!currentOrder) {
+            throw new AppError(
+              "Order not found",
+              404
+            );
+          }
+
+
+          if (
+            currentOrder.paymentStatus ===
+            "PAID"
+          ) {
+            return currentOrder;
+          }
+
+          if (
+            currentOrder.status !==
+              "PENDING" ||
+            currentOrder.paymentStatus !==
+              "PENDING"
+          ) {
+            throw new AppError(
+              "Order can no longer be confirmed",
+              409
+            );
+          }
+
+          if (
+            enforceExpiry &&
+            currentOrder.expiresAt &&
+            currentOrder.expiresAt <=
+              new Date()
+          ) {
+            throw new AppError(
+              "This payment session has expired",
+              409
+            );
+          }
+
+          return tx.order.update({
+            where: {
+              id: currentOrder.id,
+            },
+
+            data: {
+              paymentStatus: "PAID",
+
+              status: "CONFIRMED",
+
+              razorpayPaymentId,
+
+              ...(razorpaySignature
+                ? {
+                    razorpaySignature,
+                  }
+                : {}),
+            },
+
+            include: {
+              items: true,
+            },
+          });
+        },
+        {
+          isolationLevel:
+            "Serializable",
+
+          maxWait: 5000,
+
+          timeout: 10000,
+        }
+      )
+  );
+};
 
 
 export const verifyPayment = async (
@@ -1390,86 +1588,21 @@ export const verifyPayment = async (
     );
   }
 
-
-
-  return withTransactionRetry(
-    () =>
-      prisma.$transaction(
-        async (tx) => {
-          const currentOrder =
-            await tx.order.findUnique({
-              where: {
-                id: order.id,
-              },
-
-              include: {
-                items: true,
-              },
-            });
-
-          if (!currentOrder) {
-            throw new AppError(
-              "Order not found",
-              404
-            );
-          }
-
-
-          if (
-            currentOrder.paymentStatus ===
-            "PAID"
-          ) {
-            return currentOrder;
-          }
-
-          if (
-            currentOrder.status !==
-              "PENDING" ||
-            currentOrder.paymentStatus !==
-              "PENDING"
-          ) {
-            throw new AppError(
-              "Order can no longer be confirmed",
-              409
-            );
-          }
-
-          if (
-            currentOrder.expiresAt &&
-            currentOrder.expiresAt <=
-              new Date()
-          ) {
-            throw new AppError(
-              "This payment session has expired",
-              409
-            );
-          }
-          return tx.order.update({
-            where: {
-              id: currentOrder.id,
-            },
-
-            data: {
-              paymentStatus: "PAID",
-
-              status: "CONFIRMED",
-
-              razorpayPaymentId:
-                razorpay_payment_id,
-
-              razorpaySignature:
-                razorpay_signature,
-            },
-          });
-        },
-        {
-          isolationLevel:
-            "Serializable",
-
-          maxWait: 5000,
-
-          timeout: 10000,
-        }
-      )
+  await ensurePaymentCaptured(
+    razorpay_order_id,
+    razorpay_payment_id,
+    toPaise(order.total)
   );
+
+  return confirmOrderPayment({
+    orderId: order.id,
+
+    razorpayPaymentId:
+      razorpay_payment_id,
+
+    razorpaySignature:
+      razorpay_signature,
+
+    enforceExpiry: true,
+  });
 };

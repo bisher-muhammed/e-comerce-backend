@@ -25,3 +25,22 @@ export const listCustomersSchema = z.object({
     .max(100)
     .default(10),
 });
+
+export const customerIdSchema = z.object({
+  id: z.coerce
+    .number()
+    .int()
+    .positive("Invalid customer ID"),
+});
+
+export const updateCustomerStatusSchema = z.object({
+  status: z.enum([
+    "ACTIVE",
+    "SUSPENDED",
+    "DEACTIVATED",
+  ]),
+});
+
+export type UpdateCustomerStatusInput = z.infer<
+  typeof updateCustomerStatusSchema
+>;

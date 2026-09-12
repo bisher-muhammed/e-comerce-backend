@@ -434,6 +434,10 @@ export const updateCoupon = async (
     data.discountValue ??
     Number(existingCoupon.discountValue);
 
+  const finalMinimumOrderAmount =
+    data.minimumOrderAmount ??
+    Number(existingCoupon.minimumOrderAmount);
+
   const finalMaximumDiscountAmount =
     data.maximumDiscountAmount !== undefined
       ? data.maximumDiscountAmount
@@ -477,8 +481,19 @@ export const updateCoupon = async (
     finalMaximumDiscountAmount !== null
   ) {
     throw new AppError(
-      
+
       "Maximum discount amount can only be used with percentage coupons", 400
+    );
+  }
+
+  if (
+    finalDiscountType === "FIXED" &&
+    finalMinimumOrderAmount <=
+      finalDiscountValue
+  ) {
+    throw new AppError(
+      "Minimum order amount must be greater than the discount value for a fixed-amount coupon",
+      400
     );
   }
 

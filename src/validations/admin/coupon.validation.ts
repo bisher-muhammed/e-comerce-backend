@@ -111,17 +111,30 @@ export const createCouponSchema = z
         });
       }
     }
-    if (
-      data.discountType === "FIXED" &&
-      data.maximumDiscountAmount !== undefined &&
-      data.maximumDiscountAmount !== null
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "Maximum discount amount can only be used with percentage coupons",
-        path: ["maximumDiscountAmount"],
-      });
+    if (data.discountType === "FIXED") {
+      if (
+        data.maximumDiscountAmount !== undefined &&
+        data.maximumDiscountAmount !== null
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "Maximum discount amount can only be used with percentage coupons",
+          path: ["maximumDiscountAmount"],
+        });
+      }
+
+      if (
+        data.minimumOrderAmount <=
+        data.discountValue
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "Minimum order amount must be greater than the discount value for a fixed-amount coupon",
+          path: ["minimumOrderAmount"],
+        });
+      }
     }
   });
 

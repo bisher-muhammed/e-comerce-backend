@@ -2,6 +2,10 @@ import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
 import { deleteImageFromStorage } from "./image.service";
 import { ListProductsQuery } from "../../validations/product.validation";
+import {
+  CATALOG_NAMESPACE,
+  invalidateNamespace,
+} from "../../utils/cache.util";
 
 export type ProductImageInput =
   | {
@@ -461,7 +465,7 @@ export const createProduct = async (data: CreateProductInput) => {
   await validateProductUniqueness(data.name, data.slug);
 
   try {
-    return await prisma.$transaction(async (tx) => {
+    const created = await prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
         data: {
           name: data.name,
@@ -480,6 +484,10 @@ export const createProduct = async (data: CreateProductInput) => {
         include: productInclude,
       });
     });
+
+    await invalidateNamespace(CATALOG_NAMESPACE);
+
+    return created;
   } catch (error) {
     rethrowAsUniquenessError(error);
   }
@@ -703,6 +711,8 @@ export const updateProduct = async (id: number, data: UpdateProductInput) => {
 
   await deleteImagesIfUnreferenced(candidatePublicIds);
 
+  await invalidateNamespace(CATALOG_NAMESPACE);
+
   return result;
 };
 
@@ -731,4 +741,6 @@ export const deleteProduct = async (id: number) => {
   });
 
   await deleteImagesIfUnreferenced(publicIds);
+
+  await invalidateNamespace(CATALOG_NAMESPACE);
 };
