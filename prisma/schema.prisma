@@ -1,6 +1,6 @@
 generator client {
-  provider = "prisma-client"
-  output = "../generated/prisma"
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
   moduleFormat = "cjs"
 }
 
@@ -22,37 +22,28 @@ enum UserStatus {
 }
 
 model User {
-  id Int @id @default(autoincrement())
-  email String @unique
+  id        Int        @id @default(autoincrement())
+  email     String     @unique
   firstName String
-  lastName String?
-  role UserRole @default(CUSTOMER)
-  status UserStatus @default(PENDING_VERIFICATION)
+  lastName  String?
+  role      UserRole   @default(CUSTOMER)
+  status    UserStatus @default(PENDING_VERIFICATION)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-<<<<<<< HEAD
-  credential UserCredential?
-  cart Cart?
-  wishlist Wishlist?
-  addresses Address[]
-  orders Order[]
+  credential   UserCredential?
+  cart         Cart?
+  wishlist     Wishlist?
+  addresses    Address[]
+  orders       Order[]
   couponClaims CouponClaim[]
-=======
-credential UserCredential?
-cart Cart?
-wishlist Wishlist?
-addresses Address[]
-orders Order[]
-couponClaims CouponClaim[]
 
-@@index([email(ops: raw("gin_trgm_ops"))], type: Gin)
->>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
+  @@index([email(ops: raw("gin_trgm_ops"))], type: Gin)
 }
 
 model UserCredential {
-  userId Int @id
+  userId       Int    @id
   passwordHash String
 
   createdAt DateTime @default(now())
@@ -62,14 +53,14 @@ model UserCredential {
 }
 
 model Category {
-  id Int @id @default(autoincrement())
-  name String @unique
-  slug String @unique
+  id          Int     @id @default(autoincrement())
+  name        String  @unique
+  slug        String  @unique
   description String?
-  isActive Boolean @default(true)
+  isActive    Boolean @default(true)
 
   products Product[]
-  offers OfferCategory[]
+  offers   OfferCategory[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -78,38 +69,33 @@ model Category {
 model Product {
   id Int @id @default(autoincrement())
 
-  name String @unique
-  slug String @unique
+  name        String  @unique
+  slug        String  @unique
   description String?
-  details String?
+  details     String?
 
   categoryId Int
-  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
   isActive Boolean @default(true)
 
-  colors ProductColor[]
+  colors        ProductColor[]
   wishlistItems WishlistItem[]
-  offers OfferProduct[]
+  offers        OfferProduct[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-<<<<<<< HEAD
   @@index([categoryId])
-  @@index([isActive])
-=======
-@@index([categoryId])
-@@index([isActive, createdAt])
-@@index([createdAt])
->>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
+  @@index([isActive, createdAt])
+  @@index([createdAt])
 }
 
 model Color {
   id Int @id @default(autoincrement())
 
-  name String @unique
-  slug String @unique
+  name    String  @unique
+  slug    String  @unique
   hexCode String?
 
   products ProductColor[]
@@ -121,8 +107,8 @@ model Color {
 model Size {
   id Int @id @default(autoincrement())
 
-  name String @unique
-  sortOrder Int @unique
+  name      String @unique
+  sortOrder Int    @unique
 
   variants ProductVariant[]
 
@@ -134,12 +120,12 @@ model ProductColor {
   id Int @id @default(autoincrement())
 
   productId Int
-  colorId Int
+  colorId   Int
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  color Color @relation(fields: [colorId], references: [id], onDelete: Restrict)
+  color   Color   @relation(fields: [colorId], references: [id], onDelete: Restrict)
 
-  images ProductImage[]
+  images   ProductImage[]
   variants ProductVariant[]
 
   createdAt DateTime @default(now())
@@ -154,15 +140,15 @@ model ProductVariant {
   id Int @id @default(autoincrement())
 
   productColorId Int
-  sizeId Int
+  sizeId         Int
 
   productColor ProductColor @relation(fields: [productColorId], references: [id], onDelete: Cascade)
-  size Size @relation(fields: [sizeId], references: [id], onDelete: Restrict)
+  size         Size         @relation(fields: [sizeId], references: [id], onDelete: Restrict)
 
   price Decimal @db.Decimal(10, 2)
-  stock Int @default(0)
+  stock Int     @default(0)
 
-  cartItems CartItem[]
+  cartItems  CartItem[]
   orderItems OrderItem[]
 
   createdAt DateTime @default(now())
@@ -177,12 +163,12 @@ model ProductImage {
   id Int @id @default(autoincrement())
 
   productColorId Int
-  publicId String
-  url String
+  publicId       String
+  url            String
 
   altText String?
 
-  sortOrder Int @default(0)
+  sortOrder Int     @default(0)
   isPrimary Boolean @default(false)
 
   productColor ProductColor @relation(fields: [productColorId], references: [id], onDelete: Cascade)
@@ -219,15 +205,10 @@ model CartItem {
 
   quantity Int @default(1)
 
-<<<<<<< HEAD
+  priceSnapshot Decimal @db.Decimal(10, 2)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-=======
-priceSnapshot Decimal @db.Decimal(10, 2)
-
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
->>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
 
   @@unique([cartId, productVariantId])
   @@index([cartId])
@@ -251,10 +232,10 @@ model WishlistItem {
   id Int @id @default(autoincrement())
 
   wishlistId Int
-  productId Int
+  productId  Int
 
   wishlist Wishlist @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -268,21 +249,21 @@ model Address {
   id Int @id @default(autoincrement())
 
   userId Int
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   label AddressLabel @default(HOME)
 
   firstName String
-  lastName String?
-  phone String
+  lastName  String?
+  phone     String
 
   addressLine1 String
   addressLine2 String?
 
-  city String
-  state String
+  city       String
+  state      String
   postalCode String
-  country String @default("India")
+  country    String @default("India")
 
   isDefault Boolean @default(false)
 
@@ -296,64 +277,55 @@ model Order {
   id Int @id @default(autoincrement())
 
   userId Int
-  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  user   User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  status OrderStatus @default(PENDING)
+  status        OrderStatus   @default(PENDING)
   paymentMethod PaymentMethod
   paymentStatus PaymentStatus @default(PENDING)
 
-  razorpayOrderId String? @unique
-  razorpayPaymentId String? @unique
-  razorpaySignature String?
+  razorpayOrderId    String? @unique
+  razorpayPaymentId  String? @unique
+  razorpaySignature  String?
   cancellationReason String?
 
   contactEmail String
   contactPhone String
 
-  shippingFirstName String
-  shippingLastName String?
-  shippingPhone String
-  shippingLine1 String
-  shippingLine2 String?
-  shippingCity String
-  shippingState String
+  shippingFirstName  String
+  shippingLastName   String?
+  shippingPhone      String
+  shippingLine1      String
+  shippingLine2      String?
+  shippingCity       String
+  shippingState      String
   shippingPostalCode String
-  shippingCountry String
+  shippingCountry    String
 
   subtotal Decimal @db.Decimal(10, 2)
-  total Decimal @db.Decimal(10, 2)
+  total    Decimal @db.Decimal(10, 2)
 
   cancelledAmount Decimal @default(0) @db.Decimal(10, 2)
-  refundedAmount Decimal @default(0) @db.Decimal(10, 2)
+  refundedAmount  Decimal @default(0) @db.Decimal(10, 2)
 
-  couponCode String?
+  couponCode     String?
   couponDiscount Decimal? @db.Decimal(10, 2)
 
-<<<<<<< HEAD
   idempotencyKey String @unique
-=======
-idempotencyKey String
->>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
 
   expiresAt DateTime?
 
-  items OrderItem[]
+  items       OrderItem[]
   couponClaim CouponClaim?
-  refunds Refund[]
+  refunds     Refund[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-<<<<<<< HEAD
   @@index([userId])
+  @@index([userId, createdAt])
   @@index([status, paymentStatus, expiresAt])
-=======
-@@unique([userId, idempotencyKey])
-@@index([userId, createdAt])
-@@index([status, paymentStatus, expiresAt])
-@@index([contactEmail(ops: raw("gin_trgm_ops"))], type: Gin)
-@@index([contactPhone(ops: raw("gin_trgm_ops"))], type: Gin)
->>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
+  @@index([contactEmail(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([contactPhone(ops: raw("gin_trgm_ops"))], type: Gin)
 }
 
 enum RefundStatus {
@@ -366,16 +338,16 @@ model Refund {
   id Int @id @default(autoincrement())
 
   orderId Int
-  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
 
   amount Decimal @db.Decimal(10, 2)
 
   status RefundStatus @default(PENDING)
 
   razorpayPaymentId String
-  razorpayRefundId String? @unique
+  razorpayRefundId  String? @unique
 
-  reason String?
+  reason        String?
   failureReason String?
 
   idempotencyKey String
@@ -392,47 +364,43 @@ model OrderItem {
   id Int @id @default(autoincrement())
 
   orderId Int
-  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   productVariantId Int
-  productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
 
   productName String
-  colorName String
-  sizeName String
+  colorName   String
+  sizeName    String
 
   // This stores the actual unit price paid by the customer.
   // If an offer is applied, this should be the discounted price.
   price Decimal @db.Decimal(10, 2)
 
-  quantity Int
+  quantity          Int
   remainingQuantity Int
   cancelledQuantity Int @default(0)
-  returnedQuantity Int @default(0)
+  returnedQuantity  Int @default(0)
 
   actions OrderItemAction[]
 
-<<<<<<< HEAD
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([orderId])
-=======
-@@index([orderId])
-@@index([productVariantId])
-@@index([productName(ops: raw("gin_trgm_ops"))], type: Gin)
->>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
+  @@index([productVariantId])
+  @@index([productName(ops: raw("gin_trgm_ops"))], type: Gin)
 }
 
 model OrderItemAction {
   id Int @id @default(autoincrement())
 
   orderItemId Int
-  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
 
-  type OrderItemActionType
+  type     OrderItemActionType
   quantity Int
-  reason String?
+  reason   String?
 
   idempotencyKey String
 
@@ -442,30 +410,25 @@ model OrderItemAction {
   @@index([orderItemId])
 }
 
-enum CouponDiscountType {
-  PERCENTAGE
-  FIXED
-}
-
 model Coupon {
   id Int @id @default(autoincrement())
 
   code String @unique
   name String
 
-  discountType CouponDiscountType
-  discountValue Decimal @db.Decimal(10, 2)
+  discountType  CouponDiscountType
+  discountValue Decimal            @db.Decimal(10, 2)
 
-  minimumOrderAmount Decimal @default(0) @db.Decimal(10, 2)
+  minimumOrderAmount    Decimal  @default(0) @db.Decimal(10, 2)
   maximumDiscountAmount Decimal? @db.Decimal(10, 2)
 
-  startsOn DateTime @db.Date
+  startsOn  DateTime @db.Date
   expiresOn DateTime @db.Date
 
   isActive Boolean @default(true)
 
   usageLimit Int?
-  usedCount Int @default(0)
+  usedCount  Int  @default(0)
 
   claims CouponClaim[]
 
@@ -480,16 +443,16 @@ model CouponClaim {
   id Int @id @default(autoincrement())
 
   couponId Int
-  userId Int
+  userId   Int
 
   coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  claimedAt DateTime @default(now())
-  usedAt DateTime?
+  claimedAt DateTime  @default(now())
+  usedAt    DateTime?
 
-  orderId Int? @unique
-  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderId Int?   @unique
+  order   Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   @@unique([couponId, userId])
   @@index([userId])
@@ -501,15 +464,15 @@ model Offer {
 
   name String
 
-  discountType OfferDiscountType
-  discountValue Decimal @db.Decimal(10, 2)
+  discountType  OfferDiscountType
+  discountValue Decimal           @db.Decimal(10, 2)
 
   startsAt DateTime
-  endsAt DateTime
+  endsAt   DateTime
 
   isActive Boolean @default(true)
 
-  products OfferProduct[]
+  products   OfferProduct[]
   categories OfferCategory[]
 
   createdAt DateTime @default(now())
@@ -522,10 +485,10 @@ model Offer {
 model OfferProduct {
   id Int @id @default(autoincrement())
 
-  offerId Int
+  offerId   Int
   productId Int
 
-  offer Offer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  offer   Offer   @relation(fields: [offerId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
@@ -538,10 +501,10 @@ model OfferProduct {
 model OfferCategory {
   id Int @id @default(autoincrement())
 
-  offerId Int
+  offerId    Int
   categoryId Int
 
-  offer Offer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  offer    Offer    @relation(fields: [offerId], references: [id], onDelete: Cascade)
   category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
@@ -574,21 +537,19 @@ enum PaymentStatus {
 }
 
 enum OrderStatus {
-<<<<<<< HEAD
   PENDING
   CONFIRMED
+  SHIPPED
   CANCELLED
   DELIVERED
-=======
-PENDING
-CONFIRMED
-SHIPPED
-CANCELLED
-DELIVERED
->>>>>>> 3813fe17feeab4b86a2b0bae81b6f258edb81125
 }
 
 enum OrderItemActionType {
   CANCEL
   RETURN
+}
+
+enum CouponDiscountType {
+  PERCENTAGE
+  FIXED
 }
