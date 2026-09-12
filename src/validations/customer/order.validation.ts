@@ -81,6 +81,7 @@ export const listOrdersSchema = z
             .enum([
                 "PENDING",
                 "CONFIRMED",
+                "SHIPPED",
                 "CANCELLED",
                 "DELIVERED",
             ])
@@ -190,3 +191,40 @@ export const verifyPaymentSchema = z.object({
             "Razorpay signature is required"
         ),
 });
+
+export const verifyPaymentBodySchema =
+    verifyPaymentSchema.omit({
+        orderId: true,
+    });
+
+export type OrderIdParam = z.infer<
+    typeof orderIdSchema
+>;
+
+export type OrderItemParams = z.infer<
+    typeof orderItemParamsSchema
+>;
+
+export type ListOrdersInput = z.infer<
+    typeof listOrdersSchema
+>;
+
+export type CancelOrderInput = z.infer<
+    typeof cancelOrderSchema
+>;
+
+export type CancelOrderItemInput = z.infer<
+    typeof cancelOrderItemSchema
+>;
+
+export type ReturnOrderItemInput = z.infer<
+    typeof returnOrderItemSchema
+>;
+
+export type VerifyPaymentInput = z.infer<
+    typeof verifyPaymentSchema
+>;
+
+export type VerifyPaymentBody = z.infer<
+    typeof verifyPaymentBodySchema
+>;

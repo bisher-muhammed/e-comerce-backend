@@ -298,6 +298,7 @@ export const listProductsQuerySchema = z.object({
 });
 
 
+export type ProductIdParam = z.infer<typeof productIdSchema>;
 export type ListProductsQuery = z.infer<typeof listProductsQuerySchema>;
 export type CreateProductMetadata = z.infer<typeof createProductSchema>;
 export type UpdateProductMetadata = z.infer<typeof updateProductSchema>;

@@ -4,28 +4,17 @@ import AppError from "../../errors/AppError";
 
 import { Prisma } from "../../../generated/prisma/client";
 
+import { startOfBusinessDayUtc } from "../../utils/date-range.util";
+
+
+const MAX_AVAILABLE_COUPONS = 100;
+
 
 const normalizeCouponCode = (code: string): string => {
   return code
     .trim()
     .replace(/\s+/g, "")
     .toUpperCase();
-};
-
-const getTodayStart = (): Date => {
-  const now = new Date();
-
-  return new Date(
-    Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      0,
-      0,
-      0,
-      0
-    )
-  );
 };
 
 const isCouponCurrentlyValid = (
@@ -123,7 +112,7 @@ const calculateDiscount = (
 export const getAvailableCoupons = async (
   userId: number
 ) => {
-  const today = getTodayStart();
+  const today = startOfBusinessDayUtc();
 
   const coupons =
     await prisma.coupon.findMany({
@@ -142,6 +131,8 @@ export const getAvailableCoupons = async (
       orderBy: {
         createdAt: "desc",
       },
+
+      take: MAX_AVAILABLE_COUPONS,
 
       select: {
         id: true,
@@ -273,7 +264,7 @@ export const validateCoupon = async (
 
 
 
-  const today = getTodayStart();
+  const today = startOfBusinessDayUtc();
 
   if (
     !isCouponCurrentlyValid(
@@ -421,7 +412,7 @@ export const claimCoupon = async (
   }
 
 
-  const today = getTodayStart();
+  const today = startOfBusinessDayUtc();
 
   if (
     !isCouponCurrentlyValid(

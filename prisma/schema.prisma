@@ -85,7 +85,8 @@ createdAt DateTime @default(now())
 updatedAt DateTime @updatedAt
 
 @@index([categoryId])
-@@index([isActive])
+@@index([isActive, createdAt])
+@@index([createdAt])
 }
 
 model Color {
@@ -307,7 +308,7 @@ refundedAmount Decimal @default(0) @db.Decimal(10, 2)
 couponCode String?
 couponDiscount Decimal? @db.Decimal(10, 2)
 
-idempotencyKey String @unique
+idempotencyKey String
 
 expiresAt DateTime?
 
@@ -318,7 +319,8 @@ refunds Refund[]
 createdAt DateTime @default(now())
 updatedAt DateTime @updatedAt
 
-@@index([userId])
+@@unique([userId, idempotencyKey])
+@@index([userId, createdAt])
 @@index([status, paymentStatus, expiresAt])
 @@index([contactEmail(ops: raw("gin_trgm_ops"))], type: Gin)
 @@index([contactPhone(ops: raw("gin_trgm_ops"))], type: Gin)
@@ -373,6 +375,7 @@ createdAt DateTime @default(now())
 updatedAt DateTime @updatedAt
 
 @@index([orderId])
+@@index([productVariantId])
 @@index([productName(ops: raw("gin_trgm_ops"))], type: Gin)
 }
 
@@ -466,6 +469,7 @@ FAILED
 enum OrderStatus {
 PENDING
 CONFIRMED
+SHIPPED
 CANCELLED
 DELIVERED
 }

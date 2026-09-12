@@ -6,15 +6,27 @@ import { Prisma } from "../../../generated/prisma/client";
 import { calculateCancellationAmounts, sumGrossCancelled, } from "../../utils/order-amount.util";
 import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
 import { cancelOrderItems } from "../../utils/order-cancellation.util";
+import {
+    isUniqueConstraintOn,
+    withTransactionRetry,
+} from "../../utils/transaction-retry.util";
 import { issueRefundAfterCancellation } from "../refund.service";
 import * as checkoutService from "./checkout.service";
 
 
 
+const CANCELLATION_TRANSACTION_OPTIONS = {
+    isolationLevel: "Serializable" as const,
+    maxWait: 5000,
+    timeout: 10000,
+};
+
+
+
 function isIdempotencyConflict(err: unknown): boolean {
-    return (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
+    return isUniqueConstraintOn(
+        err,
+        "idempotencyKey"
     );
 }
 
@@ -288,7 +300,8 @@ export async function cancelOrder(
     }
 
     try {
-        await prisma.$transaction(async (tx) => {
+        await withTransactionRetry(() =>
+            prisma.$transaction(async (tx) => {
 
             const currentOrder =
                 await tx.order.findUnique({
@@ -414,7 +427,10 @@ export async function cancelOrder(
                 tx,
                 orderId
             );
-        });
+            },
+            CANCELLATION_TRANSACTION_OPTIONS
+            )
+        );
     } catch (err) {
 
 
@@ -482,68 +498,6 @@ export async function cancelOrderItem(
     idempotencyKey: string,
     reason?: string
 ) {
-    const item =
-        await prisma.orderItem.findFirst({
-            where: {
-                id: itemId,
-
-                orderId,
-
-                order: {
-                    userId,
-                },
-            },
-
-            select: {
-                id: true,
-                price: true,
-                remainingQuantity: true,
-                productVariantId: true,
-
-                order: {
-                    select: {
-                        status: true,
-                    },
-                },
-            },
-        });
-
-    if (!item) {
-        throw new AppError(
-            "Order item not found",
-            404
-        );
-    }
-
-
-
-    if (
-        item.order.status !== "PENDING" &&
-        item.order.status !== "CONFIRMED"
-    ) {
-        throw new AppError(
-            `Items can only be cancelled while the order is PENDING or CONFIRMED. Current status: ${item.order.status}`,
-            400
-        );
-    }
-
-
-
-    if (
-        quantity >
-        item.remainingQuantity
-    ) {
-        throw new AppError(
-            `Cannot cancel ${quantity} unit(s); only ${item.remainingQuantity} remain active`,
-            409
-        );
-    }
-
-
-
-    const cancellationAmount =
-        item.price.mul(quantity);
-
     let result: {
         id: number;
         remainingQuantity: number;
@@ -553,13 +507,72 @@ export async function cancelOrderItem(
     };
 
     try {
-        result = await prisma.$transaction(
+        result = await withTransactionRetry(() =>
+            prisma.$transaction(
             async (tx) => {
                 // ------------------------------------------------
                 // Read CURRENT order financial values.
                 //
                 // This must happen inside the transaction.
                 // ------------------------------------------------
+
+                const item =
+                    await tx.orderItem.findFirst({
+                        where: {
+                            id: itemId,
+
+                            orderId,
+
+                            order: {
+                                userId,
+                            },
+                        },
+
+                        select: {
+                            id: true,
+                            price: true,
+                            remainingQuantity: true,
+                            productVariantId: true,
+
+                            order: {
+                                select: {
+                                    status: true,
+                                },
+                            },
+                        },
+                    });
+
+                if (!item) {
+                    throw new AppError(
+                        "Order item not found",
+                        404
+                    );
+                }
+
+                if (
+                    item.order.status !==
+                        "PENDING" &&
+                    item.order.status !==
+                        "CONFIRMED"
+                ) {
+                    throw new AppError(
+                        `Items can only be cancelled while the order is PENDING or CONFIRMED. Current status: ${item.order.status}`,
+                        400
+                    );
+                }
+
+                if (
+                    quantity >
+                    item.remainingQuantity
+                ) {
+                    throw new AppError(
+                        `Cannot cancel ${quantity} unit(s); only ${item.remainingQuantity} remain active`,
+                        409
+                    );
+                }
+
+                const cancellationAmount =
+                    item.price.mul(quantity);
 
                 const currentOrder =
                     await tx.order.findUnique({
@@ -717,7 +730,9 @@ export async function cancelOrderItem(
                     select:
                         orderItemMutationSelect,
                 });
-            }
+            },
+            CANCELLATION_TRANSACTION_OPTIONS
+            )
         );
     } catch (err) {
 

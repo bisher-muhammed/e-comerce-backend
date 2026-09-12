@@ -26,6 +26,8 @@ import {
   releaseStock,
 } from "../../utils/stock.util";
 
+import { startOfBusinessDayUtc } from "../../utils/date-range.util";
+
 import { syncCartPriceSnapshots } from "./cart.service";
 
 const ONLINE_PAYMENT_WINDOW_MS =
@@ -83,22 +85,6 @@ function normalizeCouponCode(
     .trim()
     .replace(/\s+/g, "")
     .toUpperCase();
-}
-
-function getTodayStart(): Date {
-  const now = new Date();
-
-  return new Date(
-    Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      0,
-      0,
-      0,
-      0
-    )
-  );
 }
 
 function isCouponCurrentlyValid(
@@ -232,7 +218,7 @@ async function getCheckoutCoupon(
     );
   }
 
-  const today = getTodayStart();
+  const today = startOfBusinessDayUtc();
 
   if (
     !isCouponCurrentlyValid(
@@ -544,6 +530,7 @@ async function findOrderByIdempotencyKey(
   const existing =
     await client.order.findFirst({
       where: {
+        userId,
         idempotencyKey,
       },
       include: {
@@ -553,14 +540,6 @@ async function findOrderByIdempotencyKey(
 
   if (!existing) {
     return null;
-  }
-
-  if (existing.userId !== userId) {
-
-    throw new AppError(
-      "Invalid request",
-      409
-    );
   }
 
   if (

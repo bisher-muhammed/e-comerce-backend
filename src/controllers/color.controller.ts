@@ -12,13 +12,23 @@ import {
   deleteColor,
 } from "../services/admin/color.service";
 
+import { validated } from "../middlewares/validate.middleware";
+
+import type {
+  ColorIdParam,
+  CreateColorInput,
+  UpdateColorInput,
+} from "../validations/color.validation";
+
 export const createColorController = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const color = await createColor(req.body);
+    const color = await createColor(
+      validated<CreateColorInput>(req, "body")
+    );
 
     return res.status(201).json({
       success: true,
@@ -54,7 +64,7 @@ export const getColorByIdController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = validated<ColorIdParam>(req, "params");
 
     const color = await getColorById(id);
 
@@ -74,11 +84,11 @@ export const updateColorController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = validated<ColorIdParam>(req, "params");
 
     const color = await updateColor(
       id,
-      req.body
+      validated<UpdateColorInput>(req, "body")
     );
 
     return res.status(200).json({
@@ -97,7 +107,7 @@ export const deleteColorController = async (
   next: NextFunction
 ) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = validated<ColorIdParam>(req, "params");
 
     await deleteColor(id);
 

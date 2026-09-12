@@ -6,10 +6,11 @@ import {
   getCustomerById,
   updateCustomerStatus,
 } from "../../services/admin/list-customer.service";
-import {
-  customerIdSchema,
-  listCustomersSchema,
-  updateCustomerStatusSchema,
+import { validated } from "../../middlewares/validate.middleware";
+import type {
+  CustomerIdParam,
+  ListCustomersInput,
+  UpdateCustomerStatusInput,
 } from "../../validations/admin/listcustomer.validation";
 
 
@@ -24,7 +25,10 @@ export const listCustomersController = async (
       status,
       page,
       limit,
-    } = listCustomersSchema.parse(req.query);
+    } = validated<ListCustomersInput>(
+      req,
+      "query"
+    );
 
     const result = await listCustomers({
       search,
@@ -48,8 +52,9 @@ export const getCustomerByIdController = async (
   next: NextFunction
 ) => {
   try {
-    const { id } = customerIdSchema.parse(
-      req.params
+    const { id } = validated<CustomerIdParam>(
+      req,
+      "params"
     );
 
     const customer = await getCustomerById(id);
@@ -70,12 +75,16 @@ export const updateCustomerStatusController = async (
   next: NextFunction
 ) => {
   try {
-    const { id } = customerIdSchema.parse(
-      req.params
+    const { id } = validated<CustomerIdParam>(
+      req,
+      "params"
     );
 
     const { status } =
-      updateCustomerStatusSchema.parse(req.body);
+      validated<UpdateCustomerStatusInput>(
+        req,
+        "body"
+      );
 
     const customer = await updateCustomerStatus(
       id,

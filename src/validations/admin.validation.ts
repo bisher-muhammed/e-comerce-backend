@@ -25,7 +25,18 @@ export const createAdminSchema = z.object({
     .max(100, "Password must not exceed 100 characters"),
 });
 
+export const adminIdSchema = z.object({
+  id: z.coerce
+    .number()
+    .int("Admin ID must be a whole number")
+    .positive("Invalid admin ID"),
+});
+
 export type CreateAdminInput = z.infer<
   typeof createAdminSchema
+>;
+
+export type AdminIdParam = z.infer<
+  typeof adminIdSchema
 >;
 

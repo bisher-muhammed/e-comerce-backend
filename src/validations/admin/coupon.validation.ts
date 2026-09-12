@@ -275,6 +275,14 @@ export type CouponDiscountType = z.infer<
   typeof couponDiscountTypeSchema
 >;
 
+export type CouponIdParam = z.infer<
+  typeof couponIdSchema
+>;
+
+export type UpdateCouponStatusInput = z.infer<
+  typeof updateCouponStatusSchema
+>;
+
 export type CreateCouponInput = z.infer<
   typeof createCouponSchema
 >;

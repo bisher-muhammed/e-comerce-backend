@@ -12,6 +12,7 @@ import {
 
 import {
   createAdminSchema,
+  adminIdSchema,
 } from "../validations/admin.validation";
 
 const router = Router();
@@ -35,6 +36,7 @@ router.get(
   "/admins/:id",
   authenticate,
   authorize("SUPER_ADMIN"),
+  validate({ params: adminIdSchema }),
   getAdminByIdController
 );
 

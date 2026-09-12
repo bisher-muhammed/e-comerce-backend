@@ -41,6 +41,14 @@ export const updateCustomerStatusSchema = z.object({
   ]),
 });
 
+export type ListCustomersInput = z.infer<
+  typeof listCustomersSchema
+>;
+
+export type CustomerIdParam = z.infer<
+  typeof customerIdSchema
+>;
+
 export type UpdateCustomerStatusInput = z.infer<
   typeof updateCustomerStatusSchema
 >;

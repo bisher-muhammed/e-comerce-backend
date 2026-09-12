@@ -9,6 +9,8 @@ import {
 
 import { Prisma } from "../../../generated/prisma/client";
 
+import { isUniqueConstraintOn } from "../../utils/transaction-retry.util";
+
 import { ListOrdersQuery } from "../../validations/admin/order.validation";
 import { calculateCancellationAmounts, sumGrossCancelled, } from "../../utils/order-amount.util";
 import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
@@ -26,6 +28,12 @@ const ORDER_STATUS_TRANSITIONS: Record<
     ],
 
     CONFIRMED: [
+        OrderStatus.SHIPPED,
+        OrderStatus.DELIVERED,
+        OrderStatus.CANCELLED,
+    ],
+
+    SHIPPED: [
         OrderStatus.DELIVERED,
         OrderStatus.CANCELLED,
     ],
@@ -34,6 +42,12 @@ const ORDER_STATUS_TRANSITIONS: Record<
 
     CANCELLED: [],
 };
+
+const ADMIN_CANCELLABLE_STATUSES: OrderStatus[] = [
+    OrderStatus.PENDING,
+    OrderStatus.CONFIRMED,
+    OrderStatus.SHIPPED,
+];
 
 // ============================================================
 // VALID NEXT STATUSES
@@ -50,9 +64,9 @@ export const getValidNextStatuses = (
 // ============================================================
 
 function isIdempotencyConflict(err: unknown): boolean {
-    return (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
+    return isUniqueConstraintOn(
+        err,
+        "idempotencyKey"
     );
 }
 
@@ -452,8 +466,12 @@ export const getOrderDetails = async (
 // PENDING    → CONFIRMED
 // PENDING    → CANCELLED
 //
+// CONFIRMED  → SHIPPED
 // CONFIRMED  → DELIVERED
 // CONFIRMED  → CANCELLED
+//
+// SHIPPED    → DELIVERED
+// SHIPPED    → CANCELLED
 //
 // DELIVERED  → nothing
 // CANCELLED  → nothing
@@ -664,13 +682,12 @@ export const updateOrderStatus = async (
                 // ------------------------------------------------
 
                 if (
-                    order.status !==
-                        OrderStatus.PENDING &&
-                    order.status !==
-                        OrderStatus.CONFIRMED
+                    !ADMIN_CANCELLABLE_STATUSES.includes(
+                        order.status
+                    )
                 ) {
                     throw new AppError(
-                        `Only pending or confirmed orders can be cancelled. Current status: ${order.status}`,
+                        `Only ${ADMIN_CANCELLABLE_STATUSES.join(", ")} orders can be cancelled. Current status: ${order.status}`,
                         400
                     );
                 }

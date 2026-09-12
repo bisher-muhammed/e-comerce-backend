@@ -24,6 +24,26 @@ export const isValidDateInput = (
 ): boolean =>
   !Number.isNaN(new Date(value).getTime());
 
+export const startOfBusinessDayUtc = (
+  now: Date = new Date()
+): Date => {
+  const local = new Date(
+    now.getTime() + offsetMinutes * 60 * 1000
+  );
+
+  return new Date(
+    Date.UTC(
+      local.getUTCFullYear(),
+      local.getUTCMonth(),
+      local.getUTCDate(),
+      0,
+      0,
+      0,
+      0
+    )
+  );
+};
+
 export const toDayBoundary = (
   value: string,
   edge: "start" | "end"

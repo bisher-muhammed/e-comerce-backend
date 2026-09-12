@@ -7,7 +7,7 @@ import { validate } from "../../middlewares/validate.middleware";
 
 import {
   couponCodeParamsSchema,
-  validateCouponSchema,
+  validateCouponQuerySchema,
   claimCouponSchema,
 } from "../../validations/customer/coupon.validation";
 
@@ -34,9 +34,7 @@ router.get(
   "/:code",
   validate({
     params: couponCodeParamsSchema,
-    query: validateCouponSchema.pick({
-      subtotal: true,
-    }),
+    query: validateCouponQuerySchema,
   }),
   validateCouponController
 );

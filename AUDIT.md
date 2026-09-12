@@ -11,26 +11,7 @@
 ## 1. CRITICAL
 ## 2. HIGH
 ## 3. MEDIUM
-
 ## 4. LOW
-
-- **`OrderItem.productVariantId` has no index** — the FK uses `onDelete: Restrict`, so every variant delete/update sequentially scans `OrderItem`. The one genuinely missing FK index.
-- **Order/product listing sorts on unindexed columns** — `@@index([userId])` then sorts the whole matched set per page. Wants `@@index([userId, createdAt])`; `Product.createdAt` has no index at all.
-- **`validate` middleware discards coerced params/query** — the `body` branch writes `req.body = result.data`, the `params` and `query` branches throw `result.data` away. Controllers defensively re-parse, so Zod runs twice on those routes. A trap for anyone who trusts the middleware.
-- **Retry wrapper doesn't cover its own failure modes** — `RETRYABLE_CODES = ["P2034"]` only; `P2028` (tx timeout) and `P1017` (connection closed) are both reachable from the checkout transaction.
-- **`isIdempotencyConflict` matches any P2002** — an unrelated unique violation inside the transaction is silently swallowed as "already cancelled". `isUniqueConstraintOn(err, "idempotencyKey")` already exists in `transaction-retry.util.ts:51`.
-- **Customer cancel transaction is weaker than checkout's** — reads the order outside the transaction then uses that stale array inside it; default Read Committed, no retry wrapper.
-- **`idempotencyKey` is globally unique, not per-user** — client-supplied, so adversarial key-squatting can block another user's checkout with an unexplainable 409. Wants `@@unique([userId, idempotencyKey])`.
-- **`getAvailableCoupons` unbounded** — no `take`; every customer pulls the entire active coupon catalogue with a nested `claims` relation.
-- **Admin params unvalidated on `:id` routes** — `Number(req.params.id)` → `NaN` → Prisma error → 500 with the raw message (M2). `categoryIdSchema` and `colorIdSchema` are defined but never used.
-- **ADMIN and SUPER_ADMIN not distinguished** for coupon and customer management. Product decision, not a bug.
-- **No shipped state** — the enum is `PENDING, CONFIRMED, CANCELLED, DELIVERED`, so a customer can self-cancel an order already in transit.
-- **Coupon expiry is UTC day-granular** — a coupon expiring "today" stays usable until 05:29 IST the next morning.
-- **`express.json()` has no explicit limit** — defaults to 100kb, which is fine; set it explicitly.
-- **Zero tests, zero CI, no README, no `.env.example`.**
-- **`JWT_ACCESS_SECRET =` has a space before the `=`** — dotenv 17.4.2 parses it correctly (verified empirically), so this is cosmetic. But Docker `env_file`, `set -a; source .env`, and some CI secret loaders are *not* as forgiving and would silently produce an undefined secret.
-
----
 
 ## 5. Verified correct — do not "fix" these
 

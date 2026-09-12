@@ -8,12 +8,12 @@ import {
   verifyPayment,
 } from "../../services/customer/checkout.service";
 
-import {
-  checkoutSchema,
-  verifyPaymentSchema,
-} from "../../validations/customer/checkout.validation";
+import { validated } from "../../middlewares/validate.middleware";
 
-import AppError from "../../errors/AppError";
+import type {
+  CheckoutFormData,
+  VerifyPaymentFormData,
+} from "../../validations/customer/checkout.validation";
 
 
 export const createCheckoutController =
@@ -24,35 +24,28 @@ export const createCheckoutController =
     const userId =
       req.user!.id;
 
-    const parsed =
-      checkoutSchema.safeParse(
-        req.body
+    const data =
+      validated<CheckoutFormData>(
+        req,
+        "body"
       );
-
-    if (!parsed.success) {
-      throw new AppError(
-        parsed.error.issues[0]
-          .message,
-        400
-      );
-    }
 
     const result =
       await createCheckout(
         userId,
 
-        parsed.data.addressId,
+        data.addressId,
 
-        parsed.data.contactEmail,
+        data.contactEmail,
 
-        parsed.data.contactPhone,
+        data.contactPhone,
 
-        parsed.data.paymentMethod,
+        data.paymentMethod,
 
-        parsed.data.idempotencyKey,
+        data.idempotencyKey,
 
 
-        parsed.data.couponCode
+        data.couponCode
       );
 
     res.status(201).json({
@@ -70,31 +63,21 @@ export const verifyPaymentController =
     const userId =
       req.user!.id;
 
-    const parsed =
-      verifyPaymentSchema.safeParse(
-        req.body
+    const data =
+      validated<VerifyPaymentFormData>(
+        req,
+        "body"
       );
-
-    if (!parsed.success) {
-      throw new AppError(
-        parsed.error.issues[0]
-          .message,
-        400
-      );
-    }
 
     const order =
       await verifyPayment(
         userId,
 
-        parsed.data
-          .razorpay_order_id,
+        data.razorpay_order_id,
 
-        parsed.data
-          .razorpay_payment_id,
+        data.razorpay_payment_id,
 
-        parsed.data
-          .razorpay_signature
+        data.razorpay_signature
       );
 
     res.status(200).json({
