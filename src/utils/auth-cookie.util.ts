@@ -29,6 +29,17 @@ export const refreshTokenCookieOptions: CookieOptions = {
     maxAge: REFRESH_TOKEN_TTL_SECONDS * 1000,
 };
 
+export const registrationTokenCookieOptions: CookieOptions = {
+    ...baseCookieOptions,
+    path: REGISTRATION_TOKEN_COOKIE_PATH,
+    maxAge: REGISTRATION_TTL_SECONDS * 1000,
+};
+
+export const clearRegistrationTokenCookieOptions: CookieOptions = {
+    ...baseCookieOptions,
+    path: REGISTRATION_TOKEN_COOKIE_PATH,
+};
+
 export const clearAccessTokenCookieOptions: CookieOptions = {
     ...baseCookieOptions,
     path: "/",

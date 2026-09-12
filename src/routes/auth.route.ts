@@ -15,7 +15,6 @@ import {
 import {
   registerSchema,
   verifyOtpSchema,
-  resendOtpSchema,
   loginSchema
 } from "../validations/auth.validation";
 
@@ -52,7 +51,6 @@ router.post(
 router.post(
   "/resend-otp",
   ...resendOtpLimiter,
-  validate({ body: resendOtpSchema }),
   resendOtp
 );
 

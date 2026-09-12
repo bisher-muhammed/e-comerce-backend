@@ -8,8 +8,25 @@ import { refreshAccessToken } from "../services/auth/refresh.service";
 import { logoutUser } from "../services/auth/logout.service";
 import prisma from "../config/prisma";
 import AppError from "../errors/AppError";
-import { accessTokenCookieOptions, clearAccessTokenCookieOptions, clearLegacyRefreshTokenCookieOptions, clearRefreshTokenCookieOptions, refreshTokenCookieOptions, } from "../utils/auth-cookie.util";
+import { accessTokenCookieOptions, clearAccessTokenCookieOptions, clearLegacyRefreshTokenCookieOptions, clearRefreshTokenCookieOptions, clearRegistrationTokenCookieOptions, refreshTokenCookieOptions, REGISTRATION_TOKEN_COOKIE, registrationTokenCookieOptions, } from "../utils/auth-cookie.util";
 
+
+const requireRegistrationToken = (req: Request) => {
+  const registrationToken =
+    req.cookies?.[REGISTRATION_TOKEN_COOKIE];
+
+  if (
+    typeof registrationToken !== "string" ||
+    registrationToken.length === 0
+  ) {
+    throw new AppError(
+      "Registration session is missing or has expired. Please register again.",
+      400
+    );
+  }
+
+  return registrationToken;
+};
 
 export const register = async (
   req: Request,
@@ -19,10 +36,18 @@ export const register = async (
   try {
     const registration = await registerUser(req.body);
 
+    res.cookie(
+      REGISTRATION_TOKEN_COOKIE,
+      registration.registrationToken,
+      registrationTokenCookieOptions
+    );
+
     return res.status(201).json({
       success: true,
       message: "Verification code sent",
-      data: registration,
+      data: {
+        email: registration.email,
+      },
     });
   } catch (error) {
     next(error);
@@ -35,11 +60,18 @@ export const verifyOtp = async (
   next: NextFunction
 ) => {
   try {
-    const { registrationToken, otp } = req.body;
+    const registrationToken = requireRegistrationToken(req);
+
+    const { otp } = req.body;
 
     const user = await verifyRegistrationOtp(
       registrationToken,
       otp
+    );
+
+    res.clearCookie(
+      REGISTRATION_TOKEN_COOKIE,
+      clearRegistrationTokenCookieOptions
     );
 
     return res.status(201).json({
@@ -58,7 +90,7 @@ export const resendOtp = async (
   next: NextFunction
 ) => {
   try {
-    const { registrationToken } = req.body;
+    const registrationToken = requireRegistrationToken(req);
 
     const result = await resendRegistrationOtp(
       registrationToken
