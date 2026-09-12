@@ -6,10 +6,15 @@ import { LoginInput } from "../../validations/auth.validation";
 import {
   generateAccessToken,
   generateRefreshToken,
+  type AuthScope,
 } from "../../utils/jwt";
+import { assertRoleInScope } from "../../utils/auth-scope.util";
 import { startRefreshSession } from "./refresh-session.service";
 
-export const loginUser = async (data: LoginInput) => {
+export const loginUser = async (
+  data: LoginInput,
+  scope: AuthScope
+) => {
   const { email, password } = data;
 
   const user = await prisma.user.findUnique({
@@ -38,9 +43,12 @@ export const loginUser = async (data: LoginInput) => {
     throw new AppError("Invalid email or password", 401);
   }
 
+  assertRoleInScope(user.role, scope);
+
   const payload = {
     userId: user.id,
     role: user.role,
+    scope,
   };
 
   const { sid, jti } = await startRefreshSession(user.id);

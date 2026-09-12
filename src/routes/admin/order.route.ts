@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { authenticate } from "../../middlewares/auth.middleware";
+import { authenticateAdmin } from "../../middlewares/auth.middleware";
 import { authorize } from "../../middlewares/authorize.middleware";
 import { validate } from "../../middlewares/validate.middleware";
 import * as orderController from "../../controllers/admin/order.controller";
@@ -12,7 +12,7 @@ import {
 
 const router = Router();
 
-router.use(authenticate, authorize("ADMIN", "SUPER_ADMIN"));
+router.use(authenticateAdmin, authorize("ADMIN", "SUPER_ADMIN"));
 
 router.get(
   "/",

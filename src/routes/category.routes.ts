@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { authenticate } from "../middlewares/auth.middleware";
+import { authenticateAdmin } from "../middlewares/auth.middleware";
 import { authorize } from "../middlewares/authorize.middleware";
 import { validate } from "../middlewares/validate.middleware";
 
@@ -21,7 +21,7 @@ import {
 
 const router = Router();
 
-router.use(authenticate);
+router.use(authenticateAdmin);
 router.use(authorize("SUPER_ADMIN", "ADMIN"));
 
 router.post(

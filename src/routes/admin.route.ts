@@ -1,6 +1,6 @@
 import { Router } from "express";
 
-import { authenticate } from "../middlewares/auth.middleware";
+import { authenticateAdmin } from "../middlewares/auth.middleware";
 import { authorize } from "../middlewares/authorize.middleware";
 import { validate } from "../middlewares/validate.middleware";
 
@@ -19,7 +19,7 @@ const router = Router();
 
 router.post(
   "/admins",
-  authenticate,
+  authenticateAdmin,
   authorize("SUPER_ADMIN"),
   validate({ body: createAdminSchema }),
   createAdminController
@@ -27,14 +27,14 @@ router.post(
 
 router.get(
   "/admins",
-  authenticate,
+  authenticateAdmin,
   authorize("SUPER_ADMIN"),
   listAdminsController
 );
 
 router.get(
   "/admins/:id",
-  authenticate,
+  authenticateAdmin,
   authorize("SUPER_ADMIN"),
   validate({ params: adminIdSchema }),
   getAdminByIdController
