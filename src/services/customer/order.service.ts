@@ -47,6 +47,7 @@ const orderDetailsSelect = {
     shippingPhone: true,
     shippingLine1: true,
     shippingLine2: true,
+    shippingLandmark: true,
     shippingCity: true,
     shippingState: true,
     shippingPostalCode: true,
