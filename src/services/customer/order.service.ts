@@ -380,12 +380,6 @@ export async function cancelOrder(
             });
 
 
-            // --------------------------------------------
-            // Record the actions, draw down the quantities
-            // and restock — 3 round trips for the whole
-            // order rather than 3 per item.
-            // --------------------------------------------
-
             await cancelOrderItems(tx, {
                 orderId,
 

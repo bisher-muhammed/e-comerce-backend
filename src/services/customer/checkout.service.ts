@@ -658,9 +658,7 @@ async function runCodCheckout(
   );
 
   /*
-   * Reserve stock — one statement for the whole cart, so
-   * the Serializable transaction and the `Cart` row lock are
-   * held for a fixed number of round trips, not one per item.
+   * Reserve stock.
    */
   await reserveStockOrThrow(
     tx,
@@ -828,7 +826,7 @@ async function runOnlinePendingOrderCreation(
   );
 
   /*
-   * Reserve stock — see runCodCheckout.
+   * Reserve stock.
    */
   await reserveStockOrThrow(
     tx,

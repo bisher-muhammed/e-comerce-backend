@@ -60,6 +60,167 @@ function isIdempotencyConflict(err: unknown): boolean {
 // LIST ORDERS
 // ============================================================
 
+const ORDER_LIST_SELECT = {
+    id: true,
+
+    status: true,
+
+    paymentStatus: true,
+
+    paymentMethod: true,
+
+    contactEmail: true,
+
+    contactPhone: true,
+
+    subtotal: true,
+
+    total: true,
+
+    cancelledAmount: true,
+
+    refundedAmount: true,
+
+    cancellationReason: true,
+
+    expiresAt: true,
+
+    createdAt: true,
+
+    updatedAt: true,
+
+    user: {
+        select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+        },
+    },
+
+    _count: {
+        select: {
+            items: true,
+        },
+    },
+} satisfies Prisma.OrderSelect;
+
+const SORT_COLUMNS: Record<
+    ListOrdersQuery["sortBy"],
+    string
+> = {
+    createdAt: "createdAt",
+    total: "total",
+    status: "status",
+};
+
+const searchedOrderIds = async (params: {
+    search: string;
+    status?: OrderStatus;
+    paymentStatus?: PaymentStatus;
+    paymentMethod?: PaymentMethod;
+    sortBy: ListOrdersQuery["sortBy"];
+    sortOrder: ListOrdersQuery["sortOrder"];
+    skip: number;
+    take: number;
+}) => {
+    const {
+        search,
+        status,
+        paymentStatus,
+        paymentMethod,
+        sortBy,
+        sortOrder,
+        skip,
+        take,
+    } = params;
+
+    const pattern = `%${search}%`;
+
+    const searchAsId = /^\d+$/.test(search)
+        ? Number(search)
+        : undefined;
+
+    const conditions: Prisma.Sql[] = [
+        Prisma.sql`o."id" IN (
+                SELECT "id" FROM "Order"
+                 WHERE "contactEmail" ILIKE ${pattern}
+            UNION
+                SELECT "id" FROM "Order"
+                 WHERE "contactPhone" LIKE ${pattern}
+            UNION
+                SELECT "orderId" FROM "OrderItem"
+                 WHERE "productName" ILIKE ${pattern}
+            UNION
+                SELECT o2."id" FROM "Order" o2
+                  JOIN "User" u ON u."id" = o2."userId"
+                 WHERE u."email" ILIKE ${pattern}
+            ${
+                searchAsId === undefined
+                    ? Prisma.empty
+                    : Prisma.sql`UNION SELECT ${searchAsId}::int`
+            }
+        )`,
+    ];
+
+    if (status) {
+        conditions.push(
+            Prisma.sql`o."status" = ${status}::"OrderStatus"`
+        );
+    }
+
+    if (paymentStatus) {
+        conditions.push(
+            Prisma.sql`o."paymentStatus" = ${paymentStatus}::"PaymentStatus"`
+        );
+    }
+
+    if (paymentMethod) {
+        conditions.push(
+            Prisma.sql`o."paymentMethod" = ${paymentMethod}::"PaymentMethod"`
+        );
+    }
+
+    const whereSql = Prisma.join(
+        conditions,
+        " AND "
+    );
+
+    const sortColumn = Prisma.raw(
+        `"${SORT_COLUMNS[sortBy]}"`
+    );
+
+    const direction = Prisma.raw(
+        sortOrder === "asc" ? "ASC" : "DESC"
+    );
+
+    const [rows, counted] =
+        await prisma.$transaction([
+            prisma.$queryRaw<
+                Array<{ id: number }>
+            >`
+                SELECT o."id"
+                  FROM "Order" o
+                 WHERE ${whereSql}
+                 ORDER BY o.${sortColumn} ${direction}
+                 LIMIT ${take} OFFSET ${skip}
+            `,
+
+            prisma.$queryRaw<
+                Array<{ count: number }>
+            >`
+                SELECT COUNT(*)::int AS count
+                  FROM "Order" o
+                 WHERE ${whereSql}
+            `,
+        ]);
+
+    return {
+        ids: rows.map((row) => row.id),
+        total: counted[0]?.count ?? 0,
+    };
+};
+
 export const listOrders = async (
     query: ListOrdersQuery
 ) => {
@@ -74,141 +235,88 @@ export const listOrders = async (
         sortOrder,
     } = query;
 
-    const searchAsId =
-        search && /^\d+$/.test(search)
-            ? Number(search)
-            : undefined;
+    let orders;
+    let total: number;
 
-    // --------------------------------------------------------
-    // WHERE
-    // --------------------------------------------------------
+    if (search) {
+        const matched =
+            await searchedOrderIds({
+                search,
+                status,
+                paymentStatus,
+                paymentMethod,
+                sortBy,
+                sortOrder,
+                skip: (page - 1) * limit,
+                take: limit,
+            });
 
-    const where: Prisma.OrderWhereInput = {
-        ...(status && {
-            status,
-        }),
+        total = matched.total;
 
-        ...(paymentStatus && {
-            paymentStatus,
-        }),
+        const unordered =
+            matched.ids.length === 0
+                ? []
+                : await prisma.order.findMany({
+                      where: {
+                          id: {
+                              in: matched.ids,
+                          },
+                      },
 
-        ...(paymentMethod && {
-            paymentMethod,
-        }),
+                      select: ORDER_LIST_SELECT,
+                  });
 
-        ...(search && {
-            OR: [
-                // Order ID
-                ...(searchAsId !== undefined
-                    ? [{ id: searchAsId }]
-                    : []),
+        const byId = new Map(
+            unordered.map((order) => [
+                order.id,
+                order,
+            ])
+        );
 
-                // Customer email
-                {
-                    contactEmail: {
-                        contains: search,
-                        mode: "insensitive",
+        orders = matched.ids
+            .map((id) => byId.get(id))
+            .filter(
+                (
+                    order
+                ): order is (typeof unordered)[number] =>
+                    order !== undefined
+            );
+    } else {
+        const where: Prisma.OrderWhereInput = {
+            ...(status && {
+                status,
+            }),
+
+            ...(paymentStatus && {
+                paymentStatus,
+            }),
+
+            ...(paymentMethod && {
+                paymentMethod,
+            }),
+        };
+
+        [orders, total] =
+            await prisma.$transaction([
+                prisma.order.findMany({
+                    where,
+
+                    orderBy: {
+                        [sortBy]: sortOrder,
                     },
-                },
 
-                // Customer phone
-                {
-                    contactPhone: {
-                        contains: search,
-                    },
-                },
+                    skip: (page - 1) * limit,
 
-                // Product name
-                {
-                    items: {
-                        some: {
-                            productName: {
-                                contains: search,
-                                mode: "insensitive",
-                            },
-                        },
-                    },
-                },
+                    take: limit,
 
-                // User email
-                {
-                    user: {
-                        email: {
-                            contains: search,
-                            mode: "insensitive",
-                        },
-                    },
-                },
-            ],
-        }),
-    };
+                    select: ORDER_LIST_SELECT,
+                }),
 
-    // --------------------------------------------------------
-    // QUERY
-    // --------------------------------------------------------
-
-    const [orders, total] = await prisma.$transaction([
-        prisma.order.findMany({
-            where,
-
-            orderBy: {
-                [sortBy]: sortOrder,
-            },
-
-            skip: (page - 1) * limit,
-
-            take: limit,
-
-            select: {
-                id: true,
-
-                status: true,
-
-                paymentStatus: true,
-
-                paymentMethod: true,
-
-                contactEmail: true,
-
-                contactPhone: true,
-
-                subtotal: true,
-
-                total: true,
-
-                cancelledAmount: true,
-
-                refundedAmount: true,
-
-                cancellationReason: true,
-
-                expiresAt: true,
-
-                createdAt: true,
-
-                updatedAt: true,
-
-                user: {
-                    select: {
-                        id: true,
-                        firstName: true,
-                        lastName: true,
-                        email: true,
-                    },
-                },
-
-                _count: {
-                    select: {
-                        items: true,
-                    },
-                },
-            },
-        }),
-
-        prisma.order.count({
-            where,
-        }),
-    ]);
+                prisma.order.count({
+                    where,
+                }),
+            ]);
+    }
 
     // --------------------------------------------------------
     // PAGINATION
@@ -631,12 +739,7 @@ export const updateOrderStatus = async (
                 });
 
                 // ------------------------------------------------
-                // Cancel the active items
-                //
-                // Record the actions, draw down the quantities and
-                // restock — three set-based statements for the
-                // whole order, not three per item. The transaction
-                // is Serializable and holds a pooled connection.
+                // Cancel each active item
                 // ------------------------------------------------
 
                 await cancelOrderItems(tx, {

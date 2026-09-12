@@ -402,16 +402,6 @@ type TransactionClient = Parameters<
   Parameters<typeof prisma.$transaction>[0]
 >[0];
 
-/*
- * Write a product's colours, images and variants in 3 round trips instead of
- * 3 per colour.
- *
- * `createManyAndReturn` hands back the generated `ProductColor` ids, which is
- * the only thing the per-colour loop was there for. Rows are matched back by
- * `colorId` rather than by position — validateProductOptions already rejects
- * duplicates, so it is unique within the request, and the match does not
- * depend on RETURNING preserving insert order.
- */
 const insertColors = async (
   tx: Pick<
     TransactionClient,

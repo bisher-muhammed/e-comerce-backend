@@ -11,18 +11,6 @@
 ## 1. CRITICAL
 ## 2. HIGH
 
-### H9. Order search does a full sequential scan
-
-[`customer/order.service.ts:115`](src/services/customer/order.service.ts#L115)
-
-```ts
-{ items: { some: { productName: { contains: search, mode: "insensitive" } } } }
-```
-
-`ILIKE '%foo%'` cannot use a B-tree index, and `some` compiles to a correlated subquery → sequential scan of the entire `OrderItem` table on every keystroke. Admin order search ([`admin/order.service.ts:95-139`](src/services/admin/order.service.ts#L95-L139)) does four such scans at once.
-
-**Fix:** `pg_trgm` + GIN indexes, or restrict search to indexed columns.
-
 ---
 
 ## 3. MEDIUM

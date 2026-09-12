@@ -38,6 +38,8 @@ wishlist Wishlist?
 addresses Address[]
 orders Order[]
 couponClaims CouponClaim[]
+
+@@index([email(ops: raw("gin_trgm_ops"))], type: Gin)
 }
 
 model UserCredential {
@@ -316,6 +318,8 @@ updatedAt DateTime @updatedAt
 
 @@index([userId])
 @@index([status, paymentStatus, expiresAt])
+@@index([contactEmail(ops: raw("gin_trgm_ops"))], type: Gin)
+@@index([contactPhone(ops: raw("gin_trgm_ops"))], type: Gin)
 }
 
 enum RefundStatus {
@@ -367,6 +371,7 @@ createdAt DateTime @default(now())
 updatedAt DateTime @updatedAt
 
 @@index([orderId])
+@@index([productName(ops: raw("gin_trgm_ops"))], type: Gin)
 }
 
 model OrderItemAction {
