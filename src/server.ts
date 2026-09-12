@@ -90,6 +90,18 @@ const startServer = async () => {
     server = app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
     });
+
+    server.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE") {
+        console.error(
+          `Port ${PORT} is already in use. Set PORT to a free port and restart.`
+        );
+      } else {
+        console.error("Server error:", error);
+      }
+
+      process.exit(1);
+    });
   } catch (error) {
     console.error("Failed to start server:", error);
     process.exit(1);
