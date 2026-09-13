@@ -3,6 +3,7 @@ import argon2 from "argon2";
 import prisma from "../../config/prisma";
 import redis from "../../config/redis";
 import AppError from "../../errors/AppError";
+import { isUniqueConstraintOn } from "../../utils/transaction-retry.util";
 import { burnOtp, clearRegistrationSession, getRegistrationSession, otpKey, spendOtpAttempt, } from "./otp.service";
 
 export const verifyRegistrationOtp = async (
@@ -60,6 +61,17 @@ export const verifyRegistrationOtp = async (
     );
   }
 
+  const consumed = await redis.del(
+    otpKey(registrationToken)
+  );
+
+  if (consumed === 0) {
+    throw new AppError(
+      "This code has already been used. Please try signing in.",
+      409
+    );
+  }
+
   // 5. Check whether email was registered meanwhile
   const existingUser = await prisma.user.findUnique({
     where: {
@@ -77,31 +89,47 @@ export const verifyRegistrationOtp = async (
   }
 
   // 6. Create user
-  const user = await prisma.user.create({
-    data: {
-      firstName: registrationData.firstName,
-      lastName: registrationData.lastName,
-      email: registrationData.email,
-      status :"ACTIVE",
+  const user = await prisma.user
+    .create({
+      data: {
+        firstName: registrationData.firstName,
+        lastName: registrationData.lastName,
+        email: registrationData.email,
+        status: "ACTIVE",
 
-      credential: {
-        create: {
-          passwordHash: registrationData.passwordHash,
+        credential: {
+          create: {
+            passwordHash:
+              registrationData.passwordHash,
+          },
         },
       },
-    },
 
-    select: {
-      id: true,
-      email: true,
-      firstName: true,
-      lastName: true,
-      role: true,
-      status: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+    .catch(async (error: unknown) => {
+      if (isUniqueConstraintOn(error, "email")) {
+        await clearRegistrationSession(
+          registrationToken
+        );
+
+        throw new AppError(
+          "Email is already registered",
+          409
+        );
+      }
+
+      throw error;
+    });
 
   // 7. Registration completed
   // Drop the whole session so the code cannot be replayed
