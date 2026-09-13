@@ -421,7 +421,8 @@ function createShippingSnapshot(
     lastName: string | null;
     phone: string;
     addressLine1: string;
-    addressLine2: string | null;
+    addressLine2: string;
+    landmark: string | null;
     city: string;
     state: string;
     postalCode: string;
@@ -443,6 +444,9 @@ function createShippingSnapshot(
 
     shippingLine2:
       address.addressLine2,
+
+    shippingLandmark:
+      address.landmark,
 
     shippingCity:
       address.city,

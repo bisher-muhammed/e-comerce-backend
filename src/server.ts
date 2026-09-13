@@ -8,7 +8,6 @@ import {
   startExpiredCheckoutSweeper,
   stopExpiredCheckoutSweeper,
 } from "./services/customer/checkout-cleanup.service";
-import { closeEmailTransport } from "./services/email.service";
 
 const PORT = process.env.PORT || 5000;
 
@@ -64,8 +63,6 @@ const shutdown = async (signal: string) => {
     }
 
     await prisma.$disconnect();
-
-    await closeEmailTransport();
 
     if (redis.isOpen) {
       await redis.quit();

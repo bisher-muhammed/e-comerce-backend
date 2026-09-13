@@ -92,6 +92,7 @@ interface LimiterConfig {
   message: string;
   keyGenerator?: Options["keyGenerator"];
   skipSuccessfulRequests?: boolean;
+  skipServerErrors?: boolean;
   emitHeaders?: boolean;
 }
 
@@ -102,6 +103,7 @@ const createLimiter = ({
   message,
   keyGenerator = ipKey,
   skipSuccessfulRequests = false,
+  skipServerErrors = false,
   emitHeaders = true,
 }: LimiterConfig): RateLimitRequestHandler =>
   rateLimit({
@@ -111,6 +113,17 @@ const createLimiter = ({
     legacyHeaders: false,
     passOnStoreError: true,
     skipSuccessfulRequests,
+
+    ...(skipServerErrors
+      ? {
+          skipFailedRequests: true,
+          requestWasSuccessful: (
+            _req: Request,
+            res: Response
+          ) => res.statusCode < 500,
+        }
+      : {}),
+
     keyGenerator,
     handler: tooManyRequests(message),
     store: createStore(prefix),
@@ -152,6 +165,7 @@ export const registerLimiter = [
     prefix: "register:ip",
     windowMs: HOUR,
     limit: 5,
+    skipServerErrors: true,
     message:
       "Too many registration attempts. Please try again later.",
   }),
@@ -159,6 +173,7 @@ export const registerLimiter = [
     prefix: "register:email",
     windowMs: HOUR,
     limit: 3,
+    skipServerErrors: true,
     emitHeaders: false,
     keyGenerator: (req) => bodyKey(req, "email"),
     message:
@@ -192,12 +207,14 @@ export const resendOtpLimiter = [
     prefix: "resend-otp:ip",
     windowMs: HOUR,
     limit: 10,
+    skipServerErrors: true,
     message: AUTH_MESSAGE,
   }),
   createLimiter({
     prefix: "resend-otp:token",
     windowMs: HOUR,
     limit: 3,
+    skipServerErrors: true,
     emitHeaders: false,
     keyGenerator: (req) =>
       cookieKey(req, REGISTRATION_TOKEN_COOKIE),

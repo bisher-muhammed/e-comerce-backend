@@ -1,6 +1,7 @@
 import {
   getRegistrationSession,
   issueOtp,
+  refundOtpResend,
   spendOtpResend,
 } from "./otp.service";
 
@@ -20,10 +21,16 @@ export const resendRegistrationOtp = async (
 
   // 3. Replace the previous OTP
   // New OTP gets a fresh 2-minute lifetime and a fresh guess budget
-  await issueOtp(
-    registrationToken,
-    registrationData.email
-  );
+  try {
+    await issueOtp(
+      registrationToken,
+      registrationData.email
+    );
+  } catch (error) {
+    await refundOtpResend(registrationToken);
+
+    throw error;
+  }
 
   return {
     message: "A new verification code has been sent",
