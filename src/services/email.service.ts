@@ -1,5 +1,6 @@
 import resend from "../config/resend";
 import AppError from "../errors/AppError";
+import { logError } from "../utils/logger.util";
 import { requireEnv } from "../utils/require-env.util";
 
 const FROM = requireEnv("RESEND_FROM");
@@ -31,6 +32,15 @@ const sendTemplateEmail = async (
     ])
   );
 
+  const scrub = (text: string) =>
+    Object.values(stringified).reduce(
+      (redacted, value) =>
+        value.length >= 4
+          ? redacted.split(value).join("[redacted]")
+          : redacted,
+      text
+    );
+
   let result;
 
   try {
@@ -46,21 +56,26 @@ const sendTemplateEmail = async (
       },
     });
   } catch (error) {
-    console.error("Resend request failed:", {
-      template: templateId,
+    logError(
+      "email.send_failed",
       error,
-    });
+      { template: templateId },
+      scrub
+    );
 
     throw new AppError(DELIVERY_FAILED, 502);
   }
 
   if (result.error) {
-    console.error("Resend rejected the email:", {
-      template: templateId,
-      name: result.error.name,
-      statusCode: result.error.statusCode,
-      message: result.error.message,
-    });
+    logError(
+      "email.send_rejected",
+      result.error,
+      {
+        template: templateId,
+        statusCode: result.error.statusCode,
+      },
+      scrub
+    );
 
     throw new AppError(DELIVERY_FAILED, 502);
   }
