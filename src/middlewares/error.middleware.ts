@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { ZodError } from "zod";
 import { MulterError } from "multer";
 import AppError from "../errors/AppError";
+import { logError } from "../utils/logger.util";
 
 const MULTER_MESSAGES: Record<string, string> = {
   LIMIT_FILE_SIZE: "One of the uploaded files is too large",
@@ -19,7 +20,10 @@ const errorMiddleware = (
   res: Response,
   next: NextFunction
 ) => {
-  console.error("ERROR:", error);
+  logError("request.failed", error, {
+    method: req.method,
+    path: req.path,
+  });
 
   // Zod validation error
   if (error instanceof ZodError) {

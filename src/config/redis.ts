@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { createClient } from "redis";
+import { logError, logInfo } from "../utils/logger.util";
 
 const redis = createClient({
   url: process.env.REDIS_URL || "redis://localhost:6379",
@@ -7,7 +8,7 @@ const redis = createClient({
 });
 
 redis.on("error", (error) => {
-  console.error("Redis connection error:", error);
+  logError("redis.connection_error", error);
 });
 
 let connecting: Promise<void> | null = null;
@@ -21,7 +22,7 @@ export const connectRedis = async (): Promise<void> => {
     connecting = redis
       .connect()
       .then(() => {
-        console.log("Successfully connected to Redis");
+        logInfo("redis.connected");
       })
       .catch((error) => {
         connecting = null;

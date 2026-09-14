@@ -68,34 +68,33 @@ export const issueOtp = async (
     .randomInt(100000, 1000000)
     .toString();
 
-  await sendOtpEmail(
-    email,
-    otp,
-    OTP_TTL_SECONDS / 60
-  );
-
   const otpHash = await argon2.hash(otp);
 
-  await redis.set(
-    otpKey(registrationToken),
-    otpHash,
-    {
+  await redis
+    .multi()
+    .set(otpKey(registrationToken), otpHash, {
       EX: OTP_TTL_SECONDS,
-    }
-  );
-
-  await redis.del(attemptsKey(registrationToken));
-
-  await redis.set(
-    cooldownKey(registrationToken),
-    "1",
-    {
+    })
+    .del(attemptsKey(registrationToken))
+    .set(cooldownKey(registrationToken), "1", {
       EX: OTP_RESEND_COOLDOWN_SECONDS,
-    }
-  );
+    })
+    .exec();
 
-  if (process.env.NODE_ENV !== "production") {
-    console.log(`OTP for ${email}: ${otp}`);
+  try {
+    await sendOtpEmail(
+      email,
+      otp,
+      OTP_TTL_SECONDS / 60
+    );
+  } catch (error) {
+    await redis
+      .multi()
+      .del(otpKey(registrationToken))
+      .del(cooldownKey(registrationToken))
+      .exec();
+
+    throw error;
   }
 };
 
@@ -163,7 +162,11 @@ export const spendOtpResend = async (
 export const refundOtpResend = async (
   registrationToken: string
 ) => {
-  await redis.decr(resendsKey(registrationToken));
+  const key = resendsKey(registrationToken);
+
+  if ((await redis.decr(key)) < 0) {
+    await redis.del(key);
+  }
 };
 
 // ------------------------------------------------------------
