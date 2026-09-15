@@ -2,6 +2,7 @@ import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
 import { Prisma } from "../../../generated/prisma/client";
 import { withTransactionRetry } from "../../utils/transaction-retry.util";
+import { getEffectivePricesForVariants } from "./offer-pricing.service";
 
 const CART_ITEM_INCLUDE = {
   productVariant: {
@@ -132,6 +133,7 @@ export const addToCart = async (
   }
 };
 
+
 export const getCart = async (userId: number) => {
   const cart = await prisma.cart.findUnique({
     where: { userId },
@@ -153,22 +155,30 @@ export const getCart = async (userId: number) => {
     };
   }
 
-  let subtotal = new Prisma.Decimal(0);
+  const variantPricing = await getEffectivePricesForVariants(
+    cart.items.map((item) => ({
+      id: item.productVariant.id,
+      price: item.productVariant.price,
+      productId: item.productVariant.productColor.product.id,
+      categoryId: item.productVariant.productColor.product.categoryId,
+    }))
+  );
 
+  let subtotal = new Prisma.Decimal(0);
   let hasPriceChanges = false;
 
   const items = cart.items.map((item) => {
-    const currentPrice = item.productVariant.price;
+    const pricing = variantPricing.get(item.productVariant.id)!;
 
-    const lineTotal = currentPrice.mul(
-      item.quantity
+    const currentPrice = new Prisma.Decimal(pricing.finalPrice);
+
+    const lineTotal = currentPrice.mul(item.quantity);
+
+    const basePriceChanged = !item.priceSnapshot.equals(
+      item.productVariant.price
     );
 
-    const priceChanged = !item.priceSnapshot.equals(
-      currentPrice
-    );
-
-    if (priceChanged) {
+    if (basePriceChanged) {
       hasPriceChanges = true;
     }
 
@@ -176,8 +186,14 @@ export const getCart = async (userId: number) => {
 
     return {
       ...item,
+      originalPrice: pricing.originalPrice,
+      finalPrice: pricing.finalPrice,
+      discountPercentage: pricing.discountPercentage,
+      offerSource: pricing.offerSource,
       lineTotal: lineTotal.toFixed(2),
-      priceChanged,
+      priceChanged:
+        basePriceChanged ||
+        pricing.finalPrice !== pricing.originalPrice,
     };
   });
 
@@ -196,6 +212,7 @@ export const getCart = async (userId: number) => {
     hasPriceChanges,
   };
 };
+
 
 export const updateCartItem = async (
   userId: number,
@@ -237,7 +254,6 @@ export const updateCartItem = async (
               priceSnapshot:
                 item.productVariant.price,
             },
-            include: CART_ITEM_INCLUDE,
           });
         },
         {
@@ -258,6 +274,7 @@ export const updateCartItem = async (
     throw err;
   }
 };
+
 
 
 export const removeCartItem = async (
