@@ -1,6 +1,8 @@
 import { Router } from "express";
 
 import { validate } from "../../middlewares/validate.middleware";
+import { authenticateAdmin } from "../../middlewares/auth.middleware"; 
+import { authorize } from "../../middlewares/authorize.middleware";
 import {
   createOfferController,
   listOffersController,
@@ -19,6 +21,8 @@ import {
 
 const router = Router();
 
+
+router.use( authenticateAdmin, authorize("ADMIN", "SUPER_ADMIN") );
 router.post(
   "/",
   validate({ body: createOfferSchema }),
