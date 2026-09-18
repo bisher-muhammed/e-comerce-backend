@@ -1,20 +1,12 @@
 import prisma from "../config/prisma";
 import AppError from "../errors/AppError";
 import { Prisma } from "../../generated/prisma/client";
-import {
-    releaseStock,
-    type RawClient,
-} from "./stock.util";
+import { StockMovementType } from "../../generated/prisma/enums";
+import { releaseStock } from "./stock.util";
 
 type TransactionClient = Parameters<
     Parameters<typeof prisma.$transaction>[0]
 >[0];
-
-type CancellationClient = RawClient &
-    Pick<
-        TransactionClient,
-        "orderItemAction"
-    >;
 
 export interface CancellableOrderItem {
     id: number;
@@ -23,7 +15,7 @@ export interface CancellableOrderItem {
 }
 
 export async function cancelOrderItems(
-    tx: CancellationClient,
+    tx: TransactionClient,
     params: {
         orderId: number;
         items: CancellableOrderItem[];
@@ -65,9 +57,7 @@ export async function cancelOrderItems(
             )
     );
 
-    const cancelled = await tx.$queryRaw<
-        Array<{ id: number }>
-    >`
+    const cancelled = await tx.$queryRaw<Array<{ id: number }>>`
         UPDATE "OrderItem" AS oi
         SET "remainingQuantity" = oi."remainingQuantity" - v.quantity,
             "cancelledQuantity" = oi."cancelledQuantity" + v.quantity,
@@ -102,6 +92,9 @@ export async function cancelOrderItems(
                 item.productVariantId,
 
             quantity: item.remainingQuantity,
-        }))
+
+            orderItemId: item.id,
+        })),
+        StockMovementType.ORDER_CANCELLED
     );
 }
