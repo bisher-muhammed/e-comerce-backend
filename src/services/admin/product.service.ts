@@ -29,6 +29,7 @@ export interface ProductVariantInput {
   stock: number;
 }
 
+
 export interface ProductColorInput {
   colorId: number;
   images: ProductImageInput[];
@@ -538,6 +539,232 @@ export const getProductById = async (id: number) => {
   return product;
 };
 
+
+const getVariantIdsWithOrderHistory = async (
+  tx: Pick<TransactionClient, "orderItem">,
+  variantIds: number[],
+): Promise<Set<number>> => {
+  if (variantIds.length === 0) {
+    return new Set();
+  }
+
+  const rows = await tx.orderItem.findMany({
+    where: { productVariantId: { in: variantIds } },
+    select: { productVariantId: true },
+    distinct: ["productVariantId"],
+  });
+
+  return new Set(rows.map((row) => row.productVariantId));
+};
+
+
+interface ExistingVariant {
+  id: number;
+  sizeId: number;
+  stock: number;
+}
+
+interface ExistingColor {
+  id: number;
+  colorId: number;
+  images: Array<{ id: number; publicId: string; url: string }>;
+  variants: ExistingVariant[];
+}
+
+
+const removeColors = async (
+  tx: TransactionClient,
+  productId: number,
+  colorIdsToRemove: number[],
+  existingColors: ExistingColor[],
+): Promise<{ hardDeletedColorIds: number[] }> => {
+  const targets = existingColors.filter((c) =>
+    colorIdsToRemove.includes(c.colorId),
+  );
+
+  const allVariantIds = targets.flatMap((c) => c.variants.map((v) => v.id));
+  const soldVariantIds = await getVariantIdsWithOrderHistory(
+    tx,
+    allVariantIds,
+  );
+
+  const hardDeleteColorIds: number[] = [];
+  const softDeactivateColorRowIds: number[] = [];
+
+  for (const color of targets) {
+    const everSold = color.variants.some((v) => soldVariantIds.has(v.id));
+
+    if (everSold) {
+      softDeactivateColorRowIds.push(color.id);
+    } else {
+      hardDeleteColorIds.push(color.colorId);
+    }
+  }
+
+  if (hardDeleteColorIds.length > 0) {
+    await tx.productColor.deleteMany({
+      where: { productId, colorId: { in: hardDeleteColorIds } },
+    });
+  }
+
+  if (softDeactivateColorRowIds.length > 0) {
+    await tx.productColor.updateMany({
+      where: { id: { in: softDeactivateColorRowIds } },
+      data: { isActive: false },
+    });
+
+    await tx.productVariant.updateMany({
+      where: { productColorId: { in: softDeactivateColorRowIds } },
+      data: { isActive: false },
+    });
+  }
+
+  return { hardDeletedColorIds: hardDeleteColorIds };
+};
+
+
+const upsertColors = async (
+  tx: TransactionClient,
+  productId: number,
+  colors: ResolvedProductColor[],
+  existingColors: ExistingColor[],
+): Promise<void> => {
+  const existingByColorId = new Map(
+    existingColors.map((c) => [c.colorId, c]),
+  );
+
+  for (const color of colors) {
+    const existing = existingByColorId.get(color.colorId);
+
+    // -------- brand-new color for this product --------
+    if (!existing) {
+      await insertColors(tx, productId, [color]);
+      continue;
+    }
+
+    // -------- reactivate, in case it was previously deactivated --------
+    await tx.productColor.update({
+      where: { id: existing.id },
+      data: { isActive: true },
+    });
+
+    // -------- images: no FK restrict from OrderItem, safe to replace --------
+    await tx.productImage.deleteMany({
+      where: { productColorId: existing.id },
+    });
+
+    await tx.productImage.createMany({
+      data: color.images.map((image) => ({
+        productColorId: existing.id,
+        url: image.url,
+        publicId: image.publicId,
+        altText: image.altText || null,
+        sortOrder: image.sortOrder ?? 0,
+        isPrimary: image.isPrimary ?? false,
+      })),
+    });
+
+    // -------- variants: diff by sizeId --------
+    const existingVariantsBySizeId = new Map(
+      existing.variants.map((v) => [v.sizeId, v]),
+    );
+    const incomingSizeIds = new Set(color.variants.map((v) => v.sizeId));
+
+    const variantIdsToRemove = existing.variants
+      .filter((v) => !incomingSizeIds.has(v.sizeId))
+      .map((v) => v.id);
+
+    const soldVariantIds = await getVariantIdsWithOrderHistory(
+      tx,
+      variantIdsToRemove,
+    );
+
+    const hardDeleteVariantIds = variantIdsToRemove.filter(
+      (vid) => !soldVariantIds.has(vid),
+    );
+    const softDeactivateVariantIds = variantIdsToRemove.filter((vid) =>
+      soldVariantIds.has(vid),
+    );
+
+    if (hardDeleteVariantIds.length > 0) {
+      await tx.productVariant.deleteMany({
+        where: { id: { in: hardDeleteVariantIds } },
+      });
+    }
+
+    if (softDeactivateVariantIds.length > 0) {
+      await tx.productVariant.updateMany({
+        where: { id: { in: softDeactivateVariantIds } },
+        data: { isActive: false },
+      });
+    }
+
+    // -------- update kept variants, create new ones --------
+    const toCreate: ProductVariantInput[] = [];
+
+    for (const variant of color.variants) {
+      const existingVariant = existingVariantsBySizeId.get(variant.sizeId);
+
+      if (!existingVariant) {
+        toCreate.push(variant);
+        continue;
+      }
+
+      await tx.productVariant.update({
+        where: { id: existingVariant.id },
+        data: {
+          price: variant.price,
+          stock: variant.stock,
+          isActive: true,
+        },
+      });
+
+      // ------------------------------------------------------------
+      // NOTE — this is a real gap I'm flagging, not fixing silently:
+      // Changing `stock` here bypasses your StockMovement audit log
+      // entirely. Every restock/adjustment you built earlier goes
+      // through stock-movement.service.ts and gets logged. This path
+      // — editing stock via the product edit form — does not, and
+      // currently CANNOT without deciding whether this form should
+      // even be allowed to touch stock at all.
+      //
+      // Pick one:
+      // (a) Remove `stock` from this form entirely; force all stock
+      //     changes through /admin/stock-movements (restock/adjust).
+      // (b) Keep it here, but log a StockMovement row when
+      //     variant.stock !== existingVariant.stock (uncomment below).
+      // Leaving it as-is silently means your audit trail has a second
+      // undocumented hole, exactly like the one this whole
+      // conversation started by closing.
+      // ------------------------------------------------------------
+
+      // if (variant.stock !== existingVariant.stock) {
+      //   await tx.stockMovement.create({
+      //     data: {
+      //       productVariantId: existingVariant.id,
+      //       type: StockMovementType.MANUAL_ADJUSTMENT,
+      //       change: variant.stock - existingVariant.stock,
+      //       previousStock: existingVariant.stock,
+      //       newStock: variant.stock,
+      //       reason: "Updated via product edit form",
+      //     },
+      //   });
+      // }
+    }
+
+    if (toCreate.length > 0) {
+      await tx.productVariant.createMany({
+        data: toCreate.map((variant) => ({
+          productColorId: existing.id,
+          sizeId: variant.sizeId,
+          price: variant.price,
+          stock: variant.stock,
+        })),
+      });
+    }
+  }
+};
+
 export const updateProduct = async (id: number, data: UpdateProductInput) => {
   const existingProduct = await prisma.product.findUnique({
     where: { id },
@@ -545,6 +772,9 @@ export const updateProduct = async (id: number, data: UpdateProductInput) => {
       colors: {
         include: {
           images: true,
+          variants: {
+            select: { id: true, sizeId: true, stock: true },
+          },
         },
       },
     },
@@ -571,7 +801,6 @@ export const updateProduct = async (id: number, data: UpdateProductInput) => {
 
   if (data.colors !== undefined && removedColorIds.length > 0) {
     const patchedIds = new Set(data.colors.map((c) => c.colorId));
-
     const conflict = removedColorIds.some((colorId) => patchedIds.has(colorId));
 
     if (conflict) {
@@ -607,7 +836,6 @@ export const updateProduct = async (id: number, data: UpdateProductInput) => {
 
   if (data.colors !== undefined) {
     resolvedColors = resolveColorsForUpdate(existingProduct, data.colors);
-
     await validateProductOptions(resolvedColors);
   }
 
@@ -628,30 +856,32 @@ export const updateProduct = async (id: number, data: UpdateProductInput) => {
     throw new AppError("A product must have at least one color", 400);
   }
 
-  const touchedColorIds = new Set([...patchedColorIds, ...removedColorIdSet]);
+  // ---- images slated for Cloudinary cleanup, split by category ----
 
-  const oldImagesFromTouchedColors = existingProduct.colors
-    .filter((color) => touchedColorIds.has(color.colorId))
-    .flatMap((color) => color.images);
+  const removedColorImages = existingProduct.colors
+    .filter((c) => removedColorIdSet.has(c.colorId))
+    .flatMap((c) => c.images.map((img) => img.publicId));
 
-  const oldPublicIds = new Set(
-    oldImagesFromTouchedColors.map((image) => image.publicId),
-  );
+  const patchedOldImages = existingProduct.colors
+    .filter((c) => patchedColorIds.has(c.colorId))
+    .flatMap((c) => c.images.map((img) => img.publicId));
 
-  const newPublicIds =
+  const patchedNewImages =
     resolvedColors === undefined
-      ? new Set<string>()
-      : new Set(
-          resolvedColors.flatMap((color) =>
-            color.images.map((image) => image.publicId),
-          ),
-        );
+      ? []
+      : resolvedColors
+          .filter((c) => patchedColorIds.has(c.colorId))
+          .flatMap((c) => c.images.map((img) => img.publicId));
 
-  const candidatePublicIds = [...oldPublicIds].filter(
-    (publicId) => !newPublicIds.has(publicId),
+  const patchedNewImageSet = new Set(patchedNewImages);
+
+  // images dropped from an existing (still-active) color during a patch
+  const patchedDroppedImages = patchedOldImages.filter(
+    (publicId) => !patchedNewImageSet.has(publicId),
   );
 
   let result;
+  let hardDeletedColorIds: number[] = [];
 
   try {
     result = await prisma.$transaction(async (tx) => {
@@ -675,29 +905,18 @@ export const updateProduct = async (id: number, data: UpdateProductInput) => {
         },
       });
 
-      /*
-       * Explicit removals first.
-       */
       if (removedColorIds.length > 0) {
-        await tx.productColor.deleteMany({
-          where: {
-            productId: id,
-            colorId: { in: removedColorIds },
-          },
-        });
+        const removeResult = await removeColors(
+          tx,
+          id,
+          removedColorIds,
+          existingProduct.colors,
+        );
+        hardDeletedColorIds = removeResult.hardDeletedColorIds;
       }
 
       if (resolvedColors !== undefined) {
-        const incomingColorIds = resolvedColors.map((color) => color.colorId);
-
-        await tx.productColor.deleteMany({
-          where: {
-            productId: id,
-            colorId: { in: incomingColorIds },
-          },
-        });
-
-        await insertColors(tx, id, resolvedColors);
+        await upsertColors(tx, id, resolvedColors, existingProduct.colors);
       }
 
       return tx.product.findUnique({
@@ -709,20 +928,36 @@ export const updateProduct = async (id: number, data: UpdateProductInput) => {
     rethrowAsUniquenessError(error);
   }
 
-  await deleteImagesIfUnreferenced(candidatePublicIds);
+  // only purge Cloudinary assets for colors that were ACTUALLY
+  // hard-deleted — a soft-deactivated color's images must survive,
+  // since the DB rows themselves were never removed.
+  const hardDeletedColorIdSet = new Set(hardDeletedColorIds);
 
+  const safeRemovedImages = existingProduct.colors
+    .filter((c) => hardDeletedColorIdSet.has(c.colorId))
+    .flatMap((c) => c.images.map((img) => img.publicId));
+
+  const candidatePublicIds = [
+    ...new Set([...patchedDroppedImages, ...safeRemovedImages]),
+  ];
+
+  await deleteImagesIfUnreferenced(candidatePublicIds);
   await invalidateNamespace(CATALOG_NAMESPACE);
 
   return result;
 };
 
-export const deleteProduct = async (id: number) => {
+
+export const deleteProduct = async (
+  id: number,
+): Promise<{ deactivated: boolean }> => {
   const product = await prisma.product.findUnique({
     where: { id },
     include: {
       colors: {
         include: {
           images: true,
+          variants: { select: { id: true } },
         },
       },
     },
@@ -732,15 +967,37 @@ export const deleteProduct = async (id: number) => {
     throw new AppError("Product not found", 404);
   }
 
+  const allVariantIds = product.colors.flatMap((c) =>
+    c.variants.map((v) => v.id),
+  );
+
+  const soldVariantIds = await getVariantIdsWithOrderHistory(
+    prisma,
+    allVariantIds,
+  );
+
+  const hasAnyOrderHistory = soldVariantIds.size > 0;
+
+  if (hasAnyOrderHistory) {
+    // Cannot hard-delete — order history depends on this product's
+    // variants. Deactivate instead, same pattern as isActive elsewhere.
+    await prisma.product.update({
+      where: { id },
+      data: { isActive: false },
+    });
+
+    await invalidateNamespace(CATALOG_NAMESPACE);
+
+    return { deactivated: true };
+  }
+
   const publicIds = product.colors.flatMap((productColor) =>
     productColor.images.map((image) => image.publicId),
   );
 
-  await prisma.product.delete({
-    where: { id },
-  });
-
+  await prisma.product.delete({ where: { id } });
   await deleteImagesIfUnreferenced(publicIds);
-
   await invalidateNamespace(CATALOG_NAMESPACE);
+
+  return { deactivated: false };
 };
