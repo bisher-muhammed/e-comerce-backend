@@ -45,7 +45,9 @@ export const createCheckoutController =
         data.idempotencyKey,
 
 
-        data.couponCode
+        data.couponCode,
+
+        data.expectedTotal
       );
 
     res.status(201).json({

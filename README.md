@@ -52,11 +52,14 @@ Two things bite people on a fresh clone:
 | `npm run build`     | Type-checks and emits to `dist/`                    |
 | `npm start`         | Runs the build output (`dist/src/server.js`)        |
 | `npm run typecheck` | `tsc --noEmit` over `src/` and `prisma/`            |
+| `npm run check:migrations` | Rejects unapproved destructive migrations    |
 | `npm run seed`      | Seeds the super admin and the base catalogue        |
 
-CI (`.github/workflows/ci.yml`) runs migrations against a throwaway Postgres,
-then typecheck, build, and a schema-drift check on every push and pull
-request.
+CI (`.github/workflows/ci.yml`) runs on every push and pull request:
+the destructive-migration guard, every migration against a fresh Postgres,
+a schema-drift check, typecheck, build, the log check and a production
+dependency audit. Make the `verify` job a required status check on `main`
+(Settings → Branches) so it actually gates merges.
 
 ---
 

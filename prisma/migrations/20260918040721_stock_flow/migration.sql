@@ -1,23 +1,14 @@
-/*
-  Warnings:
+-- NOTE: this migration was originally generated from a branch whose
+-- schema.prisma was missing the Offer model, so Prisma emitted
+-- `DROP TABLE "Offer"` / `DROP TYPE "OfferType"` here. Those statements
+-- were removed before release (audit C1). Any environment that already
+-- applied the original version is repaired by the forward migration
+-- 20260919000000_restore_offer_table; `prisma migrate deploy` will print
+-- a "modified since applied" warning for this file there, which is
+-- expected.
 
-  - You are about to drop the `Offer` table. If the table is not empty, all the data it contains will be lost.
-
-*/
 -- CreateEnum
 CREATE TYPE "StockMovementType" AS ENUM ('ORDER_PLACED', 'ORDER_CANCELLED', 'ORDER_RETURNED', 'MANUAL_ADJUSTMENT', 'RESTOCK');
-
--- DropForeignKey
-ALTER TABLE "Offer" DROP CONSTRAINT "Offer_categoryId_fkey";
-
--- DropForeignKey
-ALTER TABLE "Offer" DROP CONSTRAINT "Offer_productId_fkey";
-
--- DropTable
-DROP TABLE "Offer";
-
--- DropEnum
-DROP TYPE "OfferType";
 
 -- CreateTable
 CREATE TABLE "StockMovement" (

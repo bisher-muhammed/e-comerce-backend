@@ -13,13 +13,15 @@ export const restockVariantController = async (req: Request, res: Response, next
     const { variantId } = validated<VariantIdParam>(req, "params");
     const body = validated<RestockBody>(req, "body");
 
-    const movement = await stockMovementService.restockVariant({
+    const { movement, replayed } = await stockMovementService.restockVariant({
       productVariantId: variantId,
       ...body,
     });
 
-    res.status(201).json({
+    // 201 when stock changed, 200 for a replay of the same key.
+    res.status(replayed ? 200 : 201).json({
       success: true,
+      replayed,
       data: movement,
     });
   } catch (error) {
@@ -32,13 +34,14 @@ export const adjustVariantStockController = async (req: Request, res: Response, 
     const { variantId } = validated<VariantIdParam>(req, "params");
     const body = validated<ManualAdjustmentBody>(req, "body");
 
-    const movement = await stockMovementService.adjustVariantStock({
+    const { movement, replayed } = await stockMovementService.adjustVariantStock({
       productVariantId: variantId,
       ...body,
     });
 
-    res.status(201).json({
+    res.status(replayed ? 200 : 201).json({
       success: true,
+      replayed,
       data: movement,
     });
   } catch (error) {
@@ -64,4 +67,12 @@ export const listStockMovementsController = async (req: Request, res: Response, 
   } catch (error) {
     next(error);
   }
+};
+export const stockReconciliationController = async (_req: Request, res: Response) => {
+  const mismatches = await stockMovementService.findStockLedgerMismatches();
+
+  res.status(200).json({
+    success: true,
+    data: { consistent: mismatches.length === 0, mismatches },
+  });
 };

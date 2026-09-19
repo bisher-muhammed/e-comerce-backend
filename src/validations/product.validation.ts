@@ -89,11 +89,21 @@ const productVariantSchema = z.object({
       "Price can have at most 2 decimal places"
     ),
 
+  /*
+   * Initial stock for a variant created by this request. For a variant
+   * that already exists it is ignored: live stock only changes through
+   * orders and /admin/stock-movements (audit H3), so a form opened before
+   * a sale cannot write its stale number back.
+   */
   stock: z
     .number()
     .int("Stock must be a whole number")
     .min(0, "Stock cannot be negative")
-    .max(1000000, "Stock is too high"),
+    .max(1000000, "Stock is too high")
+    .default(0),
+
+  // Omitted = keep the current value (new variants start active).
+  isActive: z.boolean().optional(),
 });
 
 
@@ -130,6 +140,9 @@ const updateProductColorSchema = z.object({
     .number()
     .int("Color ID must be a whole number")
     .positive("Invalid color"),
+
+  // Omitted = keep the current value (new colours start active).
+  isActive: z.boolean().optional(),
 
   images: z
     .array(updateProductImageSchema)

@@ -1,6 +1,9 @@
 declare global {
   namespace Express {
     interface Request {
+      /** Correlation id, echoed as X-Request-Id and put on every log line. */
+      id?: string;
+
       validated?: {
         body?: unknown;
         params?: unknown;
@@ -17,6 +20,8 @@ declare global {
           | "ACTIVE"
           | "SUSPENDED"
           | "DEACTIVATED";
+        mfaEnabled?: boolean;
+        permissions?: string[];
       };
     }
   }

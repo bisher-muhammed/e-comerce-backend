@@ -15,8 +15,14 @@ import {
 
 import { RedisStore } from "rate-limit-redis";
 
+import jwt from "jsonwebtoken";
+
 import redis, { connectRedis } from "../config/redis";
-import { REGISTRATION_TOKEN_COOKIE } from "../utils/auth-cookie.util";
+import {
+  REGISTRATION_TOKEN_COOKIE,
+  refreshTokenCookieName,
+} from "../utils/auth-cookie.util";
+import type { AuthScope } from "../utils/jwt";
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -223,10 +229,72 @@ export const resendOtpLimiter = [
   }),
 ];
 
-export const refreshTokenLimiter = createLimiter({
-  prefix: "refresh-token",
+/*
+ * Refresh (audit M5). Requests without a refresh cookie never reach these
+ * limiters (rejectMissingRefreshCookie answers 401 first), so anonymous
+ * page loads cannot spend anyone's budget. What remains is keyed by the
+ * refresh session (`sid`), so users sharing one IP (carrier NAT, offices)
+ * no longer compete; the per-IP limit is only a high abuse ceiling.
+ */
+const refreshSessionKey = (scope: AuthScope) => (req: Request) => {
+  const token = (req.cookies as Record<string, unknown> | undefined)?.[
+    refreshTokenCookieName(scope)
+  ];
+
+  // Unverified decode is fine for bucketing: a forged sid only lands the
+  // forger in a bucket of their own; the controller still verifies.
+  const decoded =
+    typeof token === "string" ? jwt.decode(token) : null;
+
+  const sid =
+    decoded && typeof decoded === "object" && typeof decoded.sid === "string"
+      ? decoded.sid
+      : null;
+
+  return sid
+    ? `${scope}:sid:${sid}`
+    : `${scope}:${hashedKey(req, token)}`;
+};
+
+export const refreshTokenLimiters = (scope: AuthScope) => [
+  createLimiter({
+    prefix: `refresh-token:ip:${scope}`,
+    windowMs: 15 * MINUTE,
+    limit: 600,
+    message: AUTH_MESSAGE,
+  }),
+  createLimiter({
+    prefix: `refresh-token:session:${scope}`,
+    windowMs: 15 * MINUTE,
+    limit: 30,
+    emitHeaders: false,
+    keyGenerator: refreshSessionKey(scope),
+    message: AUTH_MESSAGE,
+  }),
+];
+
+export const passwordResetLimiter = [
+  createLimiter({
+    prefix: "password-reset:ip",
+    windowMs: HOUR,
+    limit: 10,
+    message: AUTH_MESSAGE,
+  }),
+  createLimiter({
+    prefix: "password-reset:email",
+    windowMs: HOUR,
+    limit: 3,
+    emitHeaders: false,
+    keyGenerator: (req) => bodyKey(req, "email"),
+    message: AUTH_MESSAGE,
+  }),
+];
+
+export const passwordChangeLimiter = createLimiter({
+  prefix: "password-change",
   windowMs: 15 * MINUTE,
-  limit: 60,
+  limit: 10,
+  keyGenerator: userKey,
   message: AUTH_MESSAGE,
 });
 

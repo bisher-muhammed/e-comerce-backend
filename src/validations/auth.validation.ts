@@ -1,4 +1,5 @@
-import { email, z } from "zod";
+import { z } from "zod";
+import { customerPasswordSchema } from "../utils/password-policy.util";
 export const registerSchema = z.object({
   firstName: z
     .string()
@@ -21,27 +22,10 @@ export const registerSchema = z.object({
   email: z
     .string()
     .trim()
+    .toLowerCase()
     .email("Please provide a valid email address"),
 
-  password: z
-    .string()
-    .min(8, "Password must be at least 8 characters")
-    .regex(
-      /[A-Z]/,
-      "Password must contain at least one uppercase letter"
-    )
-    .regex(
-      /[a-z]/,
-      "Password must contain at least one lowercase letter"
-    )
-    .regex(
-      /[0-9]/,
-      "Password must contain at least one number"
-    )
-    .regex(
-      /[^A-Za-z0-9]/,
-      "Password must contain at least one special character"
-    ),
+  password: customerPasswordSchema,
 });
 
 export const verifyOtpSchema = z.object({
@@ -54,6 +38,7 @@ export const loginSchema = z.object({
   email:z
   .string()
   .trim()
+  .toLowerCase()
   .email("please provide a valid email"),
 
   password:z
@@ -63,6 +48,36 @@ export const loginSchema = z.object({
 
 })
 
+
+export const mfaCodeSchema = z.object({
+  code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code"),
+});
+
+export const disableMfaSchema = mfaCodeSchema.extend({
+  password: z.string().min(1, "Password is required"),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Current password is required"),
+  // Role-specific rules are applied in the service.
+  newPassword: z.string().min(8).max(128),
+});
+
+export const forgotPasswordSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Please provide a valid email"),
+});
+
+export const resetPasswordSchema = z.object({
+  token: z.string().regex(/^[0-9a-f]{64}$/, "Invalid reset link"),
+  newPassword: z.string().min(8).max(128),
+});
+
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+
+export type MfaCodeInput = z.infer<typeof mfaCodeSchema>;
+export type DisableMfaInput = z.infer<typeof disableMfaSchema>;
 
 export type RegisterInput = z.infer<typeof registerSchema>;
 

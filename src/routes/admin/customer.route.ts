@@ -1,7 +1,7 @@
 import { Router } from "express";
 
 import { authenticateAdmin } from "../../middlewares/auth.middleware";
-import { authorize } from "../../middlewares/authorize.middleware";
+import { requirePermission } from "../../middlewares/permission.middleware";
 import { validate } from "../../middlewares/validate.middleware";
 
 import {
@@ -21,7 +21,7 @@ const router = Router();
 router.get(
   "/",
   authenticateAdmin,
-  authorize("ADMIN", "SUPER_ADMIN"),
+  requirePermission("customers.read"),
   validate({
     query: listCustomersSchema,
   }),
@@ -32,7 +32,7 @@ router.get(
 router.get(
   "/:id",
   authenticateAdmin,
-  authorize("ADMIN", "SUPER_ADMIN"),
+  requirePermission("customers.read"),
   validate({
     params: customerIdSchema,
   }),
@@ -43,7 +43,7 @@ router.get(
 router.patch(
   "/:id/status",
   authenticateAdmin,
-  authorize("ADMIN", "SUPER_ADMIN"),
+  requirePermission("customers.suspend"),
   validate({
     params: customerIdSchema,
     body: updateCustomerStatusSchema,

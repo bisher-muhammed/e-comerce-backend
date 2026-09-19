@@ -1,8 +1,16 @@
 import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
 import { Prisma } from "../../../generated/prisma/client";
-import { withTransactionRetry } from "../../utils/transaction-retry.util";
+import {
+  isRetryableTransactionError,
+  withTransactionRetry,
+} from "../../utils/transaction-retry.util";
 import { getEffectivePricesForVariants } from "./offer-pricing.service";
+import {
+  assertPurchasable,
+  isPurchasable,
+  PURCHASABILITY_INCLUDE,
+} from "../../utils/purchasable.util";
 
 const CART_ITEM_INCLUDE = {
   productVariant: {
@@ -11,7 +19,7 @@ const CART_ITEM_INCLUDE = {
       productColor: {
         include: {
           color: true,
-          product: true,
+          product: { include: { category: { select: { isActive: true } } } },
           images: {
             orderBy: { sortOrder: "asc" as const },
           },
@@ -22,10 +30,8 @@ const CART_ITEM_INCLUDE = {
 } as const;
 
 const isWriteConflict = (err: unknown): boolean =>
-  typeof err === "object" &&
-  err !== null &&
-  "code" in err &&
-  (err as { code: unknown }).code === "P2034";
+  isRetryableTransactionError(err) ||
+  (err instanceof AppError && err.code === "RETRY_LATER");
 
 export const syncCartPriceSnapshots = async (
   userId: number
@@ -54,11 +60,7 @@ export const addToCart = async (
           const variant =
             await tx.productVariant.findUnique({
               where: { id: productVariantId },
-              select: {
-                id: true,
-                price: true,
-                stock: true,
-              },
+              include: PURCHASABILITY_INCLUDE,
             });
 
           if (!variant) {
@@ -67,6 +69,8 @@ export const addToCart = async (
               404
             );
           }
+
+          assertPurchasable(variant);
 
           const cart = await tx.cart.upsert({
             where: { userId },
@@ -166,6 +170,7 @@ export const getCart = async (userId: number) => {
 
   let subtotal = new Prisma.Decimal(0);
   let hasPriceChanges = false;
+  let hasUnavailableItems = false;
 
   const items = cart.items.map((item) => {
     const pricing = variantPricing.get(item.productVariant.id)!;
@@ -173,6 +178,13 @@ export const getCart = async (userId: number) => {
     const currentPrice = new Prisma.Decimal(pricing.finalPrice);
 
     const lineTotal = currentPrice.mul(item.quantity);
+
+    // Deactivated since it was added: shown, but not sold (M3).
+    const isAvailable = isPurchasable(item.productVariant);
+
+    if (!isAvailable) {
+      hasUnavailableItems = true;
+    }
 
     const basePriceChanged = !item.priceSnapshot.equals(
       item.productVariant.price
@@ -182,10 +194,13 @@ export const getCart = async (userId: number) => {
       hasPriceChanges = true;
     }
 
-    subtotal = subtotal.add(lineTotal);
+    if (isAvailable) {
+      subtotal = subtotal.add(lineTotal);
+    }
 
     return {
       ...item,
+      isAvailable,
       originalPrice: pricing.originalPrice,
       finalPrice: pricing.finalPrice,
       discountPercentage: pricing.discountPercentage,
@@ -210,6 +225,7 @@ export const getCart = async (userId: number) => {
     ),
     subtotal: subtotal.toFixed(2),
     hasPriceChanges,
+    hasUnavailableItems,
   };
 };
 
@@ -227,7 +243,9 @@ export const updateCartItem = async (
             where: { id: cartItemId },
             include: {
               cart: true,
-              productVariant: true,
+              productVariant: {
+                include: PURCHASABILITY_INCLUDE,
+              },
             },
           });
 
@@ -237,6 +255,8 @@ export const updateCartItem = async (
               404
             );
           }
+
+          assertPurchasable(item.productVariant);
 
           if (
             quantity > item.productVariant.stock

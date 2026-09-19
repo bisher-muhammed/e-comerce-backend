@@ -3,6 +3,11 @@ import AppError from "../errors/AppError";
 import { Prisma } from "../../generated/prisma/client";
 import { StockMovementType } from "../../generated/prisma/enums";
 import { releaseStock } from "./stock.util";
+import { releaseCouponClaimForOrder } from "./coupon-redemption.util";
+import {
+    calculateCancellationAmounts,
+    sumGrossCancelled,
+} from "./order-amount.util";
 
 type TransactionClient = Parameters<
     Parameters<typeof prisma.$transaction>[0]
@@ -97,4 +102,104 @@ export async function cancelOrderItems(
         })),
         StockMovementType.ORDER_CANCELLED
     );
+}
+
+/**
+ * Cancels an online order that was never paid and gives back everything
+ * it reserved: stock (ledgered as ORDER_CANCELLED per order item), the
+ * coupon claim, and the cancelled amount on the order.
+ *
+ * The status transition is a conditional UPDATE, so a payment that is
+ * confirmed concurrently wins and this returns false without touching
+ * anything. Used by the expired-checkout sweeper and by a failed payment
+ * initialisation; both must converge on the same end state.
+ */
+export async function cancelUnpaidPendingOrder(
+    tx: TransactionClient,
+    orderId: number,
+    options: {
+        reason: string;
+        /** Stable per cause, so a retried release is recorded once. */
+        idempotencyKey: string;
+        /** Only cancel if the payment window has already closed. */
+        onlyIfExpired?: boolean;
+    }
+): Promise<boolean> {
+    const claimed = await tx.order.updateMany({
+        where: {
+            id: orderId,
+            status: "PENDING",
+            paymentStatus: "PENDING",
+            ...(options.onlyIfExpired
+                ? { expiresAt: { lte: new Date() } }
+                : {}),
+        },
+        data: {
+            status: "CANCELLED",
+            cancellationReason: options.reason,
+        },
+    });
+
+    if (claimed.count === 0) {
+        return false;
+    }
+
+    const order = await tx.order.findUniqueOrThrow({
+        where: { id: orderId },
+        select: {
+            subtotal: true,
+            couponDiscount: true,
+            cancelledAmount: true,
+            items: {
+                select: {
+                    id: true,
+                    price: true,
+                    productVariantId: true,
+                    remainingQuantity: true,
+                    cancelledQuantity: true,
+                },
+            },
+        },
+    });
+
+    const activeItems = order.items.filter(
+        (item) => item.remainingQuantity > 0
+    );
+
+    if (activeItems.length > 0) {
+        const grossCancelledNow = activeItems.reduce(
+            (sum, item) =>
+                sum.add(item.price.mul(item.remainingQuantity)),
+            new Prisma.Decimal(0)
+        );
+
+        const { netCancellationAmount } =
+            calculateCancellationAmounts({
+                subtotal: order.subtotal,
+                couponDiscount: order.couponDiscount,
+                grossCancelledBefore: sumGrossCancelled(order.items),
+                netCancelledBefore: order.cancelledAmount,
+                grossCancelledNow,
+            });
+
+        await cancelOrderItems(tx, {
+            orderId,
+            items: activeItems,
+            reason: options.reason,
+            idempotencyKey: options.idempotencyKey,
+        });
+
+        await tx.order.update({
+            where: { id: orderId },
+            data: {
+                cancelledAmount: {
+                    increment: netCancellationAmount,
+                },
+            },
+        });
+    }
+
+    await releaseCouponClaimForOrder(tx, orderId);
+
+    return true;
 }

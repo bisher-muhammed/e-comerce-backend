@@ -1,13 +1,14 @@
 import { Router } from "express";
 
 import { authenticateAdmin } from "../../middlewares/auth.middleware";
-import { authorize } from "../../middlewares/authorize.middleware";
+import { permitByMethod } from "../../middlewares/permission.middleware";
 import { validate } from "../../middlewares/validate.middleware";
 
 import {
   restockVariantController,
   adjustVariantStockController,
   listStockMovementsController,
+  stockReconciliationController,
 } from "../../controllers/admin/stock-flow.controller";
 
 import {
@@ -21,13 +22,18 @@ const router = Router();
 
 // All stock movement routes require authentication + admin authorization
 router.use(authenticateAdmin);
-router.use(authorize("ADMIN", "SUPER_ADMIN"));
+router.use(permitByMethod("catalog.read", "stock.write"));
 
 // ============================================================
 // VARIANT STOCK ACTIONS
 // ============================================================
 
 // POST /admin/stock-movements/variants/:variantId/restock
+router.get(
+  "/reconciliation",
+  stockReconciliationController
+);
+
 router.post(
   "/variants/:variantId/restock",
   validate({

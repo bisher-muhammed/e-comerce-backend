@@ -74,6 +74,42 @@ export function calculateCancellationAmounts(params: {
     };
 }
 
+/**
+ * What the customer is owed back on a paid order: the net value of
+ * cancelled units plus returned-and-received units, never more than what
+ * was charged. Order.refundedAmount is compared against this; the
+ * difference is what a refund may claim.
+ */
+export function refundableAmount(order: {
+    total: Prisma.Decimal;
+    cancelledAmount: Prisma.Decimal;
+    returnedAmount: Prisma.Decimal;
+}): Prisma.Decimal {
+    return Prisma.Decimal.min(
+        order.cancelledAmount.add(order.returnedAmount),
+        order.total
+    );
+}
+
+/** Σ price × (cancelled + returned) — the gross value removed so far. */
+export function sumGrossRemoved(
+    items: Array<{
+        price: Prisma.Decimal;
+        cancelledQuantity: number;
+        returnedQuantity: number;
+    }>
+): Prisma.Decimal {
+    return items.reduce(
+        (sum, item) =>
+            sum.add(
+                item.price.mul(
+                    item.cancelledQuantity + item.returnedQuantity
+                )
+            ),
+        ZERO
+    );
+}
+
 export function sumGrossCancelled(
     items: Array<{
         price: Prisma.Decimal;

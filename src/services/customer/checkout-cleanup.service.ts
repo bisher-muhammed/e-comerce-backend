@@ -2,9 +2,9 @@ import prisma from "../../config/prisma";
 
 import { withTransactionRetry } from "../../utils/transaction-retry.util";
 
-import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
+import { cancelUnpaidPendingOrder } from "../../utils/order-cancellation.util";
 
-import { releaseStock } from "../../utils/stock.util";
+import { logError, logInfo } from "../../utils/logger.util";
 
 const SWEEP_INTERVAL_MS = 60 * 1000;
 
@@ -24,72 +24,17 @@ let sweepInProgress = false;
 // RELEASE ONE ORDER
 // ------------------------------------------------------------
 
-async function releaseExpiredOrder(
+export async function releaseExpiredOrder(
   orderId: number
 ): Promise<boolean> {
   return withTransactionRetry(() =>
     prisma.$transaction(
-      async (tx) => {
-        const claimed =
-          await tx.order.updateMany({
-            where: {
-              id: orderId,
-
-              status: "PENDING",
-
-              paymentStatus: "PENDING",
-
-              expiresAt: {
-                lte: new Date(),
-              },
-            },
-
-            data: {
-              status: "CANCELLED",
-
-              cancellationReason:
-                EXPIRY_REASON,
-            },
-          });
-
-        if (claimed.count === 0) {
-          return false;
-        }
-
-        const items =
-          await tx.orderItem.findMany({
-            where: {
-              orderId,
-
-              remainingQuantity: {
-                gt: 0,
-              },
-            },
-
-            select: {
-              productVariantId: true,
-              remainingQuantity: true,
-            },
-          });
-
-        await releaseStock(
-          tx,
-          items.map((item) => ({
-            productVariantId:
-              item.productVariantId,
-
-            quantity:
-              item.remainingQuantity,
-          }))
-        );
-
-        await releaseCouponClaimForOrder(
-          tx,
-          orderId
-        );
-
-        return true;
-      },
+      (tx) =>
+        cancelUnpaidPendingOrder(tx, orderId, {
+          reason: EXPIRY_REASON,
+          idempotencyKey: `system:expired:${orderId}`,
+          onlyIfExpired: true,
+        }),
       {
         isolationLevel: "Serializable",
 
@@ -112,6 +57,10 @@ export async function sweepExpiredCheckouts() {
 
   let failed = 0;
 
+  // Orders that failed this sweep are not retried until the next one,
+  // otherwise a single poisoned order would be re-read every batch.
+  const failedIds: number[] = [];
+
   for (
     let batch = 0;
     batch < MAX_BATCHES_PER_SWEEP;
@@ -128,6 +77,10 @@ export async function sweepExpiredCheckouts() {
           expiresAt: {
             lte: new Date(),
           },
+
+          ...(failedIds.length > 0
+            ? { id: { notIn: failedIds } }
+            : {}),
         },
 
         select: {
@@ -160,9 +113,12 @@ export async function sweepExpiredCheckouts() {
       } catch (error) {
         failed++;
 
-        console.error(
-          `[checkout-sweeper] could not release order ${order.id}`,
-          error
+        failedIds.push(order.id);
+
+        logError(
+          "checkout_sweeper.release_failed",
+          error,
+          { orderId: order.id, alert: true }
         );
       }
     }
@@ -204,19 +160,21 @@ export function startExpiredCheckoutSweeper(
       const result =
         await sweepExpiredCheckouts();
 
-      if (
-        result.released > 0 ||
-        result.failed > 0
-      ) {
-        console.log(
-          `[checkout-sweeper] released ${result.released} expired order(s), ${result.failed} failed`
+      if (result.failed > 0) {
+        logError(
+          "checkout_sweeper.sweep_incomplete",
+          new Error(
+            `${result.failed} expired order(s) could not be released`
+          ),
+          { ...result, alert: true }
         );
+      } else if (result.released > 0) {
+        logInfo("checkout_sweeper.released", result);
       }
     } catch (error) {
-      console.error(
-        "[checkout-sweeper] sweep failed",
-        error
-      );
+      logError("checkout_sweeper.sweep_failed", error, {
+        alert: true,
+      });
     } finally {
       sweepInProgress = false;
     }

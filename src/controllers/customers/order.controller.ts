@@ -12,6 +12,7 @@ import {
     returnOrderItem,
     verifyPayment,
 } from "../../services/customer/order.service";
+import { resumeOrderPayment } from "../../services/customer/checkout.service";
 
 import { validated } from "../../middlewares/validate.middleware";
 
@@ -281,6 +282,27 @@ export async function verifyPaymentController(
             message:
                 "Payment verified successfully",
             data: order,
+        });
+    } catch (error) {
+        next(error);
+    }
+}
+
+// ============================================================
+// PAY (resume an unpaid online order)
+// ============================================================
+
+export async function payOrderController(
+    req: Request,
+    res: Response,
+    next: NextFunction
+) {
+    try {
+        const { orderId } = validated<OrderIdParam>(req, "params");
+
+        res.status(200).json({
+            success: true,
+            data: await resumeOrderPayment(orderId, req.user!.id),
         });
     } catch (error) {
         next(error);

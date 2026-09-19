@@ -65,7 +65,8 @@ export const refreshAccessToken = async (
   const jti = await rotateRefreshSession(
     decoded.sid,
     decoded.jti,
-    user.id
+    user.id,
+    scope
   );
 
   const payload = {

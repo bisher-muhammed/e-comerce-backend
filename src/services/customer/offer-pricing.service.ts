@@ -6,11 +6,26 @@ export interface EffectiveOffer {
   source: "PRODUCT" | "CATEGORY";
 }
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
+/*
+ * A client able to read offers: the global client, or the interactive
+ * transaction of the caller. Checkout passes its transaction so pricing
+ * never needs a second pooled connection while it holds one (M14).
+ */
+type OfferReader = { offer: Pick<typeof prisma.offer, "findMany"> };
 
+/** price × (100 − pct) / 100, exact, rounded half-up to paise. */
+export const discountedPrice = (
+  price: Prisma.Decimal | number | string,
+  discountPercentage: number
+): Prisma.Decimal =>
+  new Prisma.Decimal(price)
+    .mul(new Prisma.Decimal(100).sub(discountPercentage))
+    .div(100)
+    .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
 
 export const getEffectiveOffersForProducts = async (
-  products: Array<{ id: number; categoryId: number }>
+  products: Array<{ id: number; categoryId: number }>,
+  client: OfferReader = prisma
 ): Promise<Map<number, EffectiveOffer | null>> => {
   const result = new Map<number, EffectiveOffer | null>();
 
@@ -22,7 +37,7 @@ export const getEffectiveOffersForProducts = async (
   const productIds = products.map((p) => p.id);
   const categoryIds = [...new Set(products.map((p) => p.categoryId))];
 
-  const offers = await prisma.offer.findMany({
+  const offers = await client.offer.findMany({
     where: {
       isActive: true,
       startsOn: { lte: now },
@@ -77,7 +92,8 @@ export const getEffectivePricesForVariants = async (
   price: Prisma.Decimal;
   productId: number;
   categoryId: number;
-}>
+}>,
+  client: OfferReader = prisma
 ) => {
   if (variants.length === 0) {
     return new Map();
@@ -95,7 +111,7 @@ export const getEffectivePricesForVariants = async (
     ).values(),
   ];
 
-  const offerMap = await getEffectiveOffersForProducts(products);
+  const offerMap = await getEffectiveOffersForProducts(products, client);
 
   const result = new Map<
     number,
@@ -122,10 +138,10 @@ export const getEffectivePricesForVariants = async (
       continue;
     }
 
-    const finalPrice = round2(
-      originalPrice *
-        (1 - offer.discountPercentage / 100)
-    );
+    const finalPrice = discountedPrice(
+      variant.price,
+      offer.discountPercentage
+    ).toNumber();
 
     result.set(variant.id, {
       originalPrice,
@@ -140,7 +156,7 @@ export const getEffectivePricesForVariants = async (
 
 interface PriceCarrierVariant {
   id: number;
-  price: number | string;
+  price: Prisma.Decimal | number | string;
   [key: string]: unknown;
 }
 
@@ -184,9 +200,10 @@ export const withEffectivePricing = async <T extends PriceCarrier>(
             };
           }
 
-          const finalPrice = round2(
-            originalPrice * (1 - offer.discountPercentage / 100)
-          );
+          const finalPrice = discountedPrice(
+            variant.price,
+            offer.discountPercentage
+          ).toNumber();
 
           return {
             ...variant,

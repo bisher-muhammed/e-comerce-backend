@@ -17,22 +17,29 @@ import {
   isUniqueConstraintOn,
 } from "../../utils/transaction-retry.util";
 
-import {
-  consumeCouponClaim,
-  releaseCouponClaimForOrder,
-} from "../../utils/coupon-redemption.util";
+import { consumeCouponClaim } from "../../utils/coupon-redemption.util";
 
-import {
-  reserveStockOrThrow,
-  releaseStock,
-} from "../../utils/stock.util";
+import { reserveStockOrThrow } from "../../utils/stock.util";
+
+import { assertPurchasable } from "../../utils/purchasable.util";
 
 import { startOfBusinessDayUtc } from "../../utils/date-range.util";
+
+import { issueRefundForOrder } from "../refund.service";
+
+import { logError } from "../../utils/logger.util";
 
 import { syncCartPriceSnapshots } from "./cart.service";
 
 const ONLINE_PAYMENT_WINDOW_MS =
   15 * 60 * 1000;
+
+/*
+ * Every unpaid online order holds its stock for the payment window.
+ * Capping how many a customer may hold at once stops one account from
+ * making products look sold out by opening checkouts it never pays.
+ */
+export const MAX_OPEN_ONLINE_ORDERS_PER_USER = 3;
 
 const ZERO = new Prisma.Decimal(0);
 
@@ -56,7 +63,11 @@ const CART_ITEM_INCLUDE = {
       productColor: {
         include: {
           color: true,
-          product: true,
+          product: {
+            include: {
+              category: { select: { isActive: true } },
+            },
+          },
         },
       },
     },
@@ -317,6 +328,12 @@ async function getCartForCheckout(
       b.productVariantId
   );
 
+  // Re-checked inside the transaction: an item deactivated after it was
+  // added to the cart must not be sold (M3).
+  for (const item of cart.items) {
+    assertPurchasable(item.productVariant);
+  }
+
   /*
    * Calculate the current effective price
    * for every variant in the cart.
@@ -332,7 +349,8 @@ async function getCartForCheckout(
 
   const effectivePrices =
     await getEffectivePricesForVariants(
-      variantInputs
+      variantInputs,
+      tx
     );
 
   return {
@@ -407,31 +425,6 @@ function buildOrderItemsData(
   });
 }
 
-
-function toStockMovements(
-  items: Array<{
-    productVariantId: number;
-    quantity: number;
-    productVariant: {
-      productColor: {
-        product: {
-          name: string;
-        };
-      };
-    };
-  }>
-) {
-  return items.map((item) => ({
-    productVariantId:
-      item.productVariantId,
-
-    quantity: item.quantity,
-
-    productName:
-      item.productVariant.productColor
-        .product.name,
-  }));
-}
 
 function calculateSubtotal(
   items: Array<{
@@ -519,6 +512,55 @@ function createShippingSnapshot(
     shippingCountry:
       address.country,
   };
+}
+
+/**
+ * Once an online order is paid, what it bought leaves the cart (M10).
+ * Only those quantities: anything the customer added meanwhile stays.
+ */
+async function removePurchasedFromCart(
+  tx: TransactionClient,
+  userId: number,
+  items: Array<{ productVariantId: number; quantity: number }>
+) {
+  const cart = await tx.cart.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
+
+  if (!cart || items.length === 0) {
+    return;
+  }
+
+  for (const item of items) {
+    await tx.cartItem.updateMany({
+      where: {
+        cartId: cart.id,
+        productVariantId: item.productVariantId,
+      },
+      data: { quantity: { decrement: item.quantity } },
+    });
+  }
+
+  await tx.cartItem.deleteMany({
+    where: { cartId: cart.id, quantity: { lte: 0 } },
+  });
+}
+
+export const PRICE_CHANGED_MESSAGE =
+  "Prices in your cart have changed. Please review the new total before placing your order.";
+
+/** Refuses to create an order at a total the customer never saw. */
+function assertExpectedTotal(
+  total: Prisma.Decimal,
+  expectedTotal: string | undefined
+) {
+  if (
+    expectedTotal !== undefined &&
+    !total.equals(new Prisma.Decimal(expectedTotal))
+  ) {
+    throw new AppError(PRICE_CHANGED_MESSAGE, 409, "PRICE_CHANGED");
+  }
 }
 
 // ============================================================
@@ -630,6 +672,7 @@ async function runCodCheckout(
     shippingSnapshot: ShippingSnapshot;
     idempotencyKey: string;
     couponCode?: string;
+    expectedTotal?: string;
   }
 ) {
   const {
@@ -639,6 +682,7 @@ async function runCodCheckout(
     shippingSnapshot,
     idempotencyKey,
     couponCode,
+    expectedTotal,
   } = params;
 
   /*
@@ -714,13 +758,8 @@ async function runCodCheckout(
     ZERO
   ).toDecimalPlaces(2);
 
-  /*
-   * Reserve stock.
-   */
-  await reserveStockOrThrow(
-    tx,
-    toStockMovements(cart.items)
-  );
+  assertExpectedTotal(total, expectedTotal);
+
 
 
   const order =
@@ -766,6 +805,21 @@ async function runCodCheckout(
       },
     });
 
+  /*
+   * Reserve stock. After the order items exist so every ORDER_PLACED
+   * movement points at its order item (M11); same transaction, so a
+   * shortage still rolls the order back.
+   */
+  await reserveStockOrThrow(
+    tx,
+    order.items.map((item) => ({
+      productVariantId: item.productVariantId,
+      quantity: item.quantity,
+      orderItemId: item.id,
+      productName: item.productName,
+    }))
+  );
+
 
   if (
     coupon.couponClaimId !== null &&
@@ -802,6 +856,7 @@ async function runOnlinePendingOrderCreation(
     shippingSnapshot: ShippingSnapshot;
     idempotencyKey: string;
     couponCode?: string;
+    expectedTotal?: string;
   }
 ) {
   const {
@@ -811,6 +866,7 @@ async function runOnlinePendingOrderCreation(
     shippingSnapshot,
     idempotencyKey,
     couponCode,
+    expectedTotal,
   } = params;
 
 
@@ -884,13 +940,25 @@ async function runOnlinePendingOrderCreation(
     ZERO
   ).toDecimalPlaces(2);
 
-  /*
-   * Reserve stock.
-   */
-  await reserveStockOrThrow(
-    tx,
-    toStockMovements(cart.items)
-  );
+  assertExpectedTotal(total, expectedTotal);
+
+  const openOnlineOrders = await tx.order.count({
+    where: {
+      userId,
+      paymentMethod: "ONLINE",
+      status: "PENDING",
+      paymentStatus: "PENDING",
+      expiresAt: { gt: new Date() },
+    },
+  });
+
+  if (openOnlineOrders >= MAX_OPEN_ONLINE_ORDERS_PER_USER) {
+    throw new AppError(
+      "You have unpaid orders waiting for payment. Please complete or cancel them before starting a new online checkout.",
+      409
+    );
+  }
+
 
   const expiresAt = new Date(
     Date.now() +
@@ -943,6 +1011,21 @@ async function runOnlinePendingOrderCreation(
       },
     });
 
+  /*
+   * Reserve stock. After the order items exist so every ORDER_PLACED
+   * movement points at its order item (M11); same transaction, so a
+   * shortage still rolls the order back.
+   */
+  await reserveStockOrThrow(
+    tx,
+    order.items.map((item) => ({
+      productVariantId: item.productVariantId,
+      quantity: item.quantity,
+      orderItemId: item.id,
+      productName: item.productName,
+    }))
+  );
+
 
   if (
     coupon.couponClaimId !== null &&
@@ -957,43 +1040,140 @@ async function runOnlinePendingOrderCreation(
     });
   }
 
-
-  await tx.cartItem.deleteMany({
-    where: {
-      cartId: cart.id,
-    },
-  });
+  // The cart is kept until the payment is confirmed (M10): a failed or
+  // abandoned payment must not leave the customer with an empty cart.
+  // confirmOrderPayment removes the purchased quantities.
 
   return order;
 }
 
 
-function buildOnlineResponse(
-  order: {
-    razorpayOrderId: string | null;
+const PAYMENT_INIT_FAILED =
+  "Unable to initialize payment. Please try again.";
+
+/**
+ * The Razorpay order for a pending online order, created on first use or
+ * after an earlier attempt failed (M10). Concurrent callers converge on
+ * the stored id; a spare Razorpay order that loses the race is never paid.
+ */
+export async function ensureRazorpayOrder(order: {
+  id: number;
+  total: Prisma.Decimal;
+  razorpayOrderId: string | null;
+}): Promise<string> {
+  if (order.razorpayOrderId) {
+    return order.razorpayOrderId;
+  }
+
+  let created;
+
+  try {
+    created = await razorpay.orders.create({
+      amount: toPaise(order.total),
+      currency: "INR",
+      receipt: `order_${order.id}`,
+    });
+  } catch (error) {
+    // The order stays PENDING with its stock held; the customer can retry
+    // (same key or /pay) and the sweeper releases it if they don't.
+    logError("checkout.payment_init_failed", error, { orderId: order.id });
+
+    throw new AppError(PAYMENT_INIT_FAILED, 502);
+  }
+
+  await prisma.order.updateMany({
+    where: { id: order.id, razorpayOrderId: null },
+    data: { razorpayOrderId: created.id },
+  });
+
+  const stored = await prisma.order.findUniqueOrThrow({
+    where: { id: order.id },
+    select: { razorpayOrderId: true },
+  });
+
+  return stored.razorpayOrderId!;
+}
+
+export const PAYMENT_ORDER_SELECT = {
+  id: true,
+  status: true,
+  paymentMethod: true,
+  paymentStatus: true,
+  total: true,
+  expiresAt: true,
+} as const;
+
+/** Refuses orders that can no longer take a payment. */
+function assertPayable(order: {
+  paymentMethod: string;
+  status: string;
+  paymentStatus: string;
+  expiresAt: Date | null;
+}) {
+  if (order.paymentMethod !== "ONLINE") {
+    throw new AppError("This order does not use online payment", 400);
+  }
+
+  if (order.paymentStatus === "PAID") {
+    throw new AppError("This order is already paid", 409);
+  }
+
+  if (
+    order.status !== "PENDING" ||
+    order.paymentStatus !== "PENDING" ||
+    (order.expiresAt !== null && order.expiresAt <= new Date())
+  ) {
+    throw new AppError("This order can no longer be paid", 409);
+  }
+}
+
+async function onlineResponse<
+  T extends {
+    id: number;
     total: Prisma.Decimal;
-  }
-) {
-  if (!order.razorpayOrderId) {
-    throw new AppError(
-      "Payment initialization did not complete previously. Please try again.",
-      409
-    );
-  }
+    razorpayOrderId: string | null;
+    status: string;
+    paymentStatus: string;
+    paymentMethod: string;
+    expiresAt: Date | null;
+  },
+>(order: T) {
+  // Never reopen a payment window for a paid, cancelled or expired order.
+  assertPayable(order);
+
+  const razorpayOrderId = await ensureRazorpayOrder(order);
 
   return {
+    order: { ...order, razorpayOrderId },
+
+    mode: "ONLINE" as const,
+
     razorpay: {
-      orderId:
-        order.razorpayOrderId,
-
+      orderId: razorpayOrderId,
       amount: toPaise(order.total),
-
       currency: "INR",
-
-      keyId:
-        process.env.RAZORPAY_KEY_ID!,
+      keyId: process.env.RAZORPAY_KEY_ID!,
     },
   };
+}
+
+/** POST /customer/orders/:orderId/pay — reopen payment for an open order. */
+export async function resumeOrderPayment(orderId: number, userId: number) {
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, userId },
+    select: { ...PAYMENT_ORDER_SELECT, razorpayOrderId: true },
+  });
+
+  if (!order) {
+    throw new AppError("Order not found", 404);
+  }
+
+  assertPayable(order);
+
+  const response = await onlineResponse(order);
+  const { razorpayOrderId: _omit, ...publicOrder } = response.order;
+
+  return { ...response, order: publicOrder };
 }
 
 
@@ -1005,6 +1185,7 @@ async function runOnlineCheckout(
     shippingSnapshot: ShippingSnapshot;
     idempotencyKey: string;
     couponCode?: string;
+    expectedTotal?: string;
   }
 ) {
   const {
@@ -1014,6 +1195,7 @@ async function runOnlineCheckout(
     shippingSnapshot,
     idempotencyKey,
     couponCode,
+    expectedTotal,
   } = params;
 
   const checkoutRequest: CheckoutRequest =
@@ -1033,16 +1215,10 @@ async function runOnlineCheckout(
       checkoutRequest
     );
 
+  // Same key again: reopen the same payment (re-initialising it if the
+  // first attempt failed) instead of a dead-end 409.
   if (alreadyProcessed) {
-    return {
-      order: alreadyProcessed,
-
-      mode: "ONLINE" as const,
-
-      ...buildOnlineResponse(
-        alreadyProcessed
-      ),
-    };
+    return onlineResponse(alreadyProcessed);
   }
 
   let pendingOrder;
@@ -1062,6 +1238,7 @@ async function runOnlineCheckout(
                   shippingSnapshot,
                   idempotencyKey,
                   couponCode,
+                  expectedTotal,
                 }
               ),
             {
@@ -1091,155 +1268,14 @@ async function runOnlineCheckout(
         );
 
       if (dup) {
-        return {
-          order: dup,
-          mode: "ONLINE" as const,
-          ...buildOnlineResponse(
-            dup
-          ),
-        };
+        return onlineResponse(dup);
       }
     }
 
     throw error;
   }
 
-
-  if (pendingOrder.razorpayOrderId) {
-    return {
-      order: pendingOrder,
-
-      mode: "ONLINE" as const,
-
-      ...buildOnlineResponse(
-        pendingOrder
-      ),
-    };
-  }
-
-
-  let razorpayOrder;
-
-  try {
-    razorpayOrder =
-      await razorpay.orders.create({
-
-        amount: toPaise(
-          pendingOrder.total
-        ),
-
-        currency: "INR",
-
-        receipt: `order_${pendingOrder.id}`,
-      });
-  } catch (error) {
-
-    await withTransactionRetry(
-      () =>
-        prisma.$transaction(
-          async (tx) => {
-            const order =
-              await tx.order.findUnique({
-                where: {
-                  id: pendingOrder.id,
-                },
-
-                include: {
-                  items: true,
-                },
-              });
-
-            if (!order) {
-              return;
-            }
-
-            if (
-              order.status !==
-                "PENDING" ||
-              order.paymentStatus !==
-                "PENDING"
-            ) {
-              return;
-            }
-
-            await releaseStock(
-              tx,
-              order.items.map((item) => ({
-                productVariantId:
-                  item.productVariantId,
-
-                quantity: item.quantity,
-              }))
-            );
-
-            await releaseCouponClaimForOrder(
-              tx,
-              order.id
-            );
-
-            await tx.order.update({
-              where: {
-                id: order.id,
-              },
-
-              data: {
-                status: "CANCELLED",
-              },
-            });
-          },
-          {
-            isolationLevel:
-              "Serializable",
-
-            maxWait: 5000,
-
-            timeout: 10000,
-          }
-        )
-    );
-
-    throw new AppError(
-      "Unable to initialize payment. Please try again.",
-      502
-    );
-  }
-
-  /*
-   * Attach the Razorpay order ID.
-   */
-  const order =
-    await prisma.order.update({
-      where: {
-        id: pendingOrder.id,
-      },
-
-      data: {
-        razorpayOrderId:
-          razorpayOrder.id,
-      },
-    });
-
-  return {
-    order,
-
-    mode: "ONLINE" as const,
-
-    razorpay: {
-      orderId:
-        razorpayOrder.id,
-
-      amount:
-        Number(
-          razorpayOrder.amount
-        ),
-
-      currency:
-        razorpayOrder.currency,
-
-      keyId:
-        process.env.RAZORPAY_KEY_ID!,
-    },
-  };
+  return onlineResponse(pendingOrder);
 }
 
 
@@ -1253,7 +1289,8 @@ export const createCheckout = async (
     | "COD"
     | "ONLINE",
   idempotencyKey: string,
-  couponCode?: string
+  couponCode?: string,
+  expectedTotal?: string
 ) => {
 
   const address =
@@ -1304,6 +1341,7 @@ export const createCheckout = async (
                   shippingSnapshot,
                   idempotencyKey,
                   couponCode,
+                  expectedTotal,
                 }),
               {
                 isolationLevel:
@@ -1360,6 +1398,7 @@ export const createCheckout = async (
     shippingSnapshot,
     idempotencyKey,
     couponCode,
+    expectedTotal,
   });
 };
 
@@ -1448,6 +1487,56 @@ export const confirmOrderPayment = async (params: {
   razorpaySignature?: string | null;
   enforceExpiry: boolean;
 }) => {
+  const confirmed = await confirmOrderPaymentTx(params);
+
+  await refundCancelledBeforeCapture(
+    confirmed.id,
+    params.razorpayPaymentId
+  );
+
+  return confirmed;
+};
+
+/**
+ * Anything cancelled while the order was unpaid was charged anyway (the
+ * Razorpay amount is fixed at creation). Give it back as soon as the
+ * payment is confirmed. Item-level cancellation of unpaid online orders
+ * is refused, so this only catches races and legacy orders.
+ */
+async function refundCancelledBeforeCapture(
+  orderId: number,
+  razorpayPaymentId: string
+) {
+  const order = await prisma.order.findUniqueOrThrow({
+    where: { id: orderId },
+    select: { cancelledAmount: true, refundedAmount: true },
+  });
+
+  if (order.cancelledAmount.lte(order.refundedAmount)) {
+    return;
+  }
+
+  try {
+    await issueRefundForOrder(
+      orderId,
+      `post-capture:${razorpayPaymentId}`,
+      "Items cancelled before the payment was captured"
+    );
+  } catch (error) {
+    // The refund worker re-issues whatever is still owed.
+    logError("refund.post_capture_failed", error, {
+      orderId,
+      alert: true,
+    });
+  }
+}
+
+const confirmOrderPaymentTx = async (params: {
+  orderId: number;
+  razorpayPaymentId: string;
+  razorpaySignature?: string | null;
+  enforceExpiry: boolean;
+}) => {
   const {
     orderId,
     razorpayPaymentId,
@@ -1508,6 +1597,12 @@ export const confirmOrderPayment = async (params: {
               409
             );
           }
+
+          await removePurchasedFromCart(
+            tx,
+            currentOrder.userId,
+            currentOrder.items
+          );
 
           return tx.order.update({
             where: {

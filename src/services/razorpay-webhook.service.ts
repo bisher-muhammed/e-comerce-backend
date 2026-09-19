@@ -1,15 +1,21 @@
 import crypto from "crypto";
 
 import prisma from "../config/prisma";
-import razorpay from "../config/razorpay";
 import AppError from "../errors/AppError";
 
-import { Prisma } from "../../generated/prisma/client";
 
 import {
   confirmOrderPayment,
   toPaise,
 } from "./customer/checkout.service";
+
+import {
+  issueOrphanPaymentRefund,
+  markRefundFailed,
+  markRefundProcessed,
+} from "./refund.service";
+
+import { logError } from "../utils/logger.util";
 
 interface WebhookPaymentEntity {
   id: string;
@@ -23,6 +29,7 @@ interface WebhookRefundEntity {
   id: string;
   payment_id: string;
   status: string;
+  notes?: Record<string, unknown> | unknown[];
 }
 
 interface WebhookEvent {
@@ -78,92 +85,54 @@ const refundCapturedPaymentForLostOrder = async (
   orderId: number,
   payment: WebhookPaymentEntity
 ) => {
-  const idempotencyKey = `webhook-orphan:${payment.id}`;
+  const outcome = await issueOrphanPaymentRefund({
+    orderId,
+    razorpayPaymentId: payment.id,
+    amountInPaise: Number(payment.amount),
+    idempotencyKey: `webhook-orphan:${payment.id}`,
+    reason:
+      "Payment captured after the order was no longer confirmable",
+  });
 
-  const amountInPaise = Number(payment.amount);
-
-  let refundRow;
-
-  try {
-    refundRow = await prisma.refund.create({
-      data: {
-        orderId,
-
-        amount: new Prisma.Decimal(amountInPaise)
-          .div(100)
-          .toDecimalPlaces(2),
-
-        razorpayPaymentId: payment.id,
-
-        reason:
-          "Payment captured after the order was no longer confirmable",
-
-        idempotencyKey,
-      },
-    });
-  } catch (error) {
-    if (
-      error instanceof
-        Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
-      return;
-    }
-
-    throw error;
-  }
-
-  try {
-    const refund = await razorpay.payments.refund(
-      payment.id,
-      {
-        amount: amountInPaise,
-
-        speed: "normal",
-
-        receipt: idempotencyKey,
-
-        notes: {
-          orderId: String(orderId),
-        },
-      }
-    );
-
-    await prisma.refund.update({
-      where: {
-        id: refundRow.id,
-      },
-
-      data: {
-        status: "PROCESSED",
-
-        razorpayRefundId: refund.id,
-      },
-    });
-  } catch (error) {
-    const failureReason =
-      error instanceof Error
-        ? error.message
-        : "Unknown refund error";
-
-    await prisma.refund.update({
-      where: {
-        id: refundRow.id,
-      },
-
-      data: {
-        status: "FAILED",
-
-        failureReason:
-          failureReason.slice(0, 500),
-      },
-    });
-
-    console.error(
-      `[razorpay-webhook] could not refund orphaned payment ${payment.id} for order ${orderId}`,
-      error
+  if (outcome.status === "FAILED" || outcome.status === "PENDING") {
+    logError(
+      "razorpay_webhook.orphan_refund_not_settled",
+      new Error(`Orphan refund ${outcome.status}`),
+      { orderId, refundId: outcome.refundId, alert: true }
     );
   }
+};
+
+/**
+ * An order that an admin moved forward before the payment arrived (only
+ * possible for legacy data now that M1 blocks it) keeps the money: record
+ * the payment, never refund it, and alert so someone checks the order.
+ */
+const recordLatePayment = async (
+  orderId: number,
+  payment: WebhookPaymentEntity
+) => {
+  const recorded = await prisma.order.updateMany({
+    where: {
+      id: orderId,
+      paymentStatus: { not: "PAID" },
+      status: { in: ["CONFIRMED", "SHIPPED", "DELIVERED"] },
+    },
+    data: {
+      paymentStatus: "PAID",
+      razorpayPaymentId: payment.id,
+    },
+  });
+
+  if (recorded.count === 1) {
+    logError(
+      "razorpay_webhook.late_payment_recorded",
+      new Error("Payment captured after the order was moved forward unpaid"),
+      { orderId, razorpayPaymentId: payment.id, alert: true }
+    );
+  }
+
+  return recorded.count === 1;
 };
 
 const handleCapturedPayment = async (
@@ -173,28 +142,43 @@ const handleCapturedPayment = async (
     return;
   }
 
-  const order = await prisma.order.findFirst({
-    where: {
-      razorpayOrderId: payment.order_id,
-    },
+  const findOrder = () =>
+    prisma.order.findFirst({
+      where: {
+        razorpayOrderId: payment.order_id!,
+      },
 
-    select: {
-      id: true,
-      status: true,
-      paymentStatus: true,
-      total: true,
-    },
-  });
+      select: {
+        id: true,
+        status: true,
+        paymentStatus: true,
+        razorpayPaymentId: true,
+        total: true,
+      },
+    });
+
+  const order = await findOrder();
 
   if (!order) {
-    console.error(
-      `[razorpay-webhook] captured payment ${payment.id} has no matching order`
+    logError(
+      "razorpay_webhook.unmatched_payment",
+      new Error(`Captured payment has no matching order`),
+      { razorpayPaymentId: payment.id, alert: true }
     );
 
     return;
   }
 
   if (order.paymentStatus === "PAID") {
+    // A second, different payment for the same order is money we must
+    // give back; the same payment again is just a duplicate event.
+    if (
+      order.razorpayPaymentId &&
+      order.razorpayPaymentId !== payment.id
+    ) {
+      await refundCapturedPaymentForLostOrder(order.id, payment);
+    }
+
     return;
   }
 
@@ -202,21 +186,23 @@ const handleCapturedPayment = async (
     Number(payment.amount) <
     toPaise(order.total)
   ) {
-    console.error(
-      `[razorpay-webhook] payment ${payment.id} is short of the total for order ${order.id}`
+    logError(
+      "razorpay_webhook.short_payment",
+      new Error("Captured amount is below the order total"),
+      { orderId: order.id, razorpayPaymentId: payment.id, alert: true }
     );
 
     return;
   }
 
-  if (
-    order.status !== "PENDING" ||
-    order.paymentStatus !== "PENDING"
-  ) {
-    await refundCapturedPaymentForLostOrder(
-      order.id,
-      payment
-    );
+  if (order.status === "CANCELLED") {
+    await refundCapturedPaymentForLostOrder(order.id, payment);
+
+    return;
+  }
+
+  if (order.status !== "PENDING") {
+    await recordLatePayment(order.id, payment);
 
     return;
   }
@@ -231,18 +217,20 @@ const handleCapturedPayment = async (
     });
   } catch (error) {
     if (
-      error instanceof AppError &&
-      error.statusCode === 409
+      !(error instanceof AppError) ||
+      error.statusCode !== 409
     ) {
-      await refundCapturedPaymentForLostOrder(
-        order.id,
-        payment
-      );
-
-      return;
+      throw error;
     }
 
-    throw error;
+    // Lost a race: decide again on the order's current state.
+    const current = await findOrder();
+
+    if (current?.status === "CANCELLED") {
+      await refundCapturedPaymentForLostOrder(order.id, payment);
+    } else if (current && current.paymentStatus !== "PAID") {
+      await recordLatePayment(order.id, payment);
+    }
   }
 };
 
@@ -250,19 +238,59 @@ const handleRefundStatus = async (
   refund: WebhookRefundEntity,
   status: "PROCESSED" | "FAILED"
 ) => {
-  const updated = await prisma.refund.updateMany({
-    where: {
-      razorpayRefundId: refund.id,
-    },
+  const notes =
+    refund.notes && !Array.isArray(refund.notes) ? refund.notes : {};
 
-    data: {
-      status,
+  const noteRefundId = Number(notes.refundId);
+
+  const row = await prisma.refund.findFirst({
+    where: {
+      OR: [
+        { razorpayRefundId: refund.id },
+        ...(Number.isInteger(noteRefundId) && noteRefundId > 0
+          ? [{ id: noteRefundId, razorpayPaymentId: refund.payment_id }]
+          : []),
+      ],
     },
+    select: { id: true, orderId: true, status: true },
   });
 
-  if (updated.count === 0) {
-    console.error(
-      `[razorpay-webhook] refund ${refund.id} is not tracked locally`
+  if (!row) {
+    logError(
+      "razorpay_webhook.untracked_refund",
+      new Error(`Refund ${refund.id} is not tracked locally`),
+      { razorpayRefundId: refund.id, alert: true }
+    );
+
+    return;
+  }
+
+  // Only PENDING rows move; PROCESSED and FAILED are terminal, so a
+  // late or out-of-order event cannot rewrite history.
+  const moved =
+    status === "PROCESSED"
+      ? await markRefundProcessed(row.id, refund.id)
+      : await markRefundFailed(
+          row.id,
+          "Razorpay reported the refund as failed",
+          refund.id
+        );
+
+  if (status === "FAILED" && moved) {
+    logError(
+      "refund.failed",
+      new Error("Razorpay reported the refund as failed"),
+      { orderId: row.orderId, refundId: row.id, alert: true }
+    );
+  }
+
+  if (!moved && row.status !== status) {
+    logError(
+      "razorpay_webhook.refund_state_conflict",
+      new Error(
+        `Refund ${row.id} is ${row.status} but Razorpay sent ${status}`
+      ),
+      { orderId: row.orderId, refundId: row.id, alert: true }
     );
   }
 };

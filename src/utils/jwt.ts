@@ -1,7 +1,9 @@
 import jwt from "jsonwebtoken";
 
-const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET!;
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET!;
+import { requireEnv } from "./require-env.util";
+
+const JWT_ACCESS_SECRET = requireEnv("JWT_ACCESS_SECRET");
+const JWT_REFRESH_SECRET = requireEnv("JWT_REFRESH_SECRET");
 
 const JWT_ALGORITHM = "HS256" as const;
 

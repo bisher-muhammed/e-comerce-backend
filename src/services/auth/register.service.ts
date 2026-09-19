@@ -6,6 +6,7 @@ import redis from "../../config/redis";
 import { RegisterInput } from "../../validations/auth.validation";
 import { issueOtp, registrationKey, REGISTRATION_TTL_SECONDS, } from "./otp.service";
 import AppError from "../../errors/AppError";
+import { assertPasswordNotBreached } from "../../utils/password-policy.util";
 
 export const registerUser = async (data: RegisterInput) => {
   const { firstName, lastName, email, password } = data;
@@ -20,6 +21,7 @@ export const registerUser = async (data: RegisterInput) => {
   }
 
   // 2. Hash the password
+  await assertPasswordNotBreached(password);
   const passwordHash = await argon2.hash(password);
 
   // 3. Generate registration token

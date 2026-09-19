@@ -2,7 +2,7 @@
 import { Router } from "express";
 
 import { authenticateAdmin } from "../../middlewares/auth.middleware";
-import { authorize } from "../../middlewares/authorize.middleware";
+import { permitByMethod } from "../../middlewares/permission.middleware";
 import { validate } from "../../middlewares/validate.middleware";
 
 import {
@@ -26,7 +26,7 @@ const router = Router();
 
 // All coupon routes require authentication + admin authorization
 router.use(authenticateAdmin);
-router.use(authorize("ADMIN", "SUPER_ADMIN"));
+router.use(permitByMethod("coupons.read", "coupons.write"));
 
 // ============================================================
 // COUPONS

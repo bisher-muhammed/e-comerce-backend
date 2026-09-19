@@ -1,5 +1,6 @@
 import prisma from "../../config/prisma";
 import AppError from "../../errors/AppError";
+import { StockMovementType } from "../../../generated/prisma/enums";
 import { deleteImageFromStorage } from "./image.service";
 import { ListProductsQuery } from "../../validations/product.validation";
 import {
@@ -26,12 +27,15 @@ export type ProductImageInput =
 export interface ProductVariantInput {
   sizeId: number;
   price: number;
+  /** Initial stock; only used when the variant is created. */
   stock: number;
+  isActive?: boolean;
 }
 
 
 export interface ProductColorInput {
   colorId: number;
+  isActive?: boolean;
   images: ProductImageInput[];
   variants: ProductVariantInput[];
 }
@@ -67,6 +71,7 @@ interface ResolvedProductImage {
 
 interface ResolvedProductColor {
   colorId: number;
+  isActive?: boolean;
   images: ResolvedProductImage[];
   variants: ProductVariantInput[];
 }
@@ -81,6 +86,7 @@ const assertAllImagesAreNew = (
 ): ResolvedProductColor[] => {
   return colors.map((color) => ({
     colorId: color.colorId,
+    isActive: color.isActive,
     variants: color.variants,
     images: color.images.map((image): ResolvedProductImage => {
       if (isExistingImage(image)) {
@@ -331,6 +337,7 @@ const resolveColorsForUpdate = (
 
   return colors.map((color) => ({
     colorId: color.colorId,
+    isActive: color.isActive,
     variants: color.variants,
 
     images: color.images.map((image): ResolvedProductImage => {
@@ -410,7 +417,7 @@ type TransactionClient = Parameters<
 const insertColors = async (
   tx: Pick<
     TransactionClient,
-    "productColor" | "productImage" | "productVariant"
+    "productColor" | "productImage" | "productVariant" | "stockMovement"
   >,
   productId: number,
   colors: ResolvedProductColor[],
@@ -423,6 +430,7 @@ const insertColors = async (
     data: colors.map((color) => ({
       productId,
       colorId: color.colorId,
+      isActive: color.isActive ?? true,
     })),
     select: { id: true, colorId: true },
   });
@@ -444,16 +452,54 @@ const insertColors = async (
     ),
   });
 
-  await tx.productVariant.createMany({
-    data: colors.flatMap((color) =>
+  await createVariants(
+    tx,
+    colors.flatMap((color) =>
       color.variants.map((variant) => ({
         productColorId: productColorIdByColorId.get(color.colorId)!,
-        sizeId: variant.sizeId,
-        price: variant.price,
-        stock: variant.stock,
+        variant,
       })),
     ),
+  );
+};
+
+/**
+ * Creates variants and writes an INITIAL_STOCK movement for each one that
+ * starts with stock, so the ledger explains every unit from day one.
+ */
+const createVariants = async (
+  tx: Pick<TransactionClient, "productVariant" | "stockMovement">,
+  rows: Array<{ productColorId: number; variant: ProductVariantInput }>,
+) => {
+  if (rows.length === 0) {
+    return;
+  }
+
+  const created = await tx.productVariant.createManyAndReturn({
+    data: rows.map(({ productColorId, variant }) => ({
+      productColorId,
+      sizeId: variant.sizeId,
+      price: variant.price,
+      stock: variant.stock,
+      isActive: variant.isActive ?? true,
+    })),
+    select: { id: true, stock: true },
   });
+
+  const opening = created.filter((variant) => variant.stock > 0);
+
+  if (opening.length > 0) {
+    await tx.stockMovement.createMany({
+      data: opening.map((variant) => ({
+        productVariantId: variant.id,
+        type: StockMovementType.INITIAL_STOCK,
+        change: variant.stock,
+        previousStock: 0,
+        newStock: variant.stock,
+        reason: "Initial stock on variant creation",
+      })),
+    });
+  }
 };
 
 export const createProduct = async (data: CreateProductInput) => {
@@ -541,27 +587,35 @@ export const getProductById = async (id: number) => {
 
 
 const getVariantIdsWithOrderHistory = async (
-  tx: Pick<TransactionClient, "orderItem">,
+  tx: Pick<TransactionClient, "orderItem" | "stockMovement">,
   variantIds: number[],
 ): Promise<Set<number>> => {
   if (variantIds.length === 0) {
     return new Set();
   }
 
-  const rows = await tx.orderItem.findMany({
-    where: { productVariantId: { in: variantIds } },
-    select: { productVariantId: true },
-    distinct: ["productVariantId"],
-  });
+  const [ordered, ledgered] = await Promise.all([
+    tx.orderItem.findMany({
+      where: { productVariantId: { in: variantIds } },
+      select: { productVariantId: true },
+      distinct: ["productVariantId"],
+    }),
+    tx.stockMovement.findMany({
+      where: { productVariantId: { in: variantIds } },
+      select: { productVariantId: true },
+      distinct: ["productVariantId"],
+    }),
+  ]);
 
-  return new Set(rows.map((row) => row.productVariantId));
+  return new Set(
+    [...ordered, ...ledgered].map((row) => row.productVariantId),
+  );
 };
 
 
 interface ExistingVariant {
   id: number;
   sizeId: number;
-  stock: number;
 }
 
 interface ExistingColor {
@@ -642,11 +696,13 @@ const upsertColors = async (
       continue;
     }
 
-    // -------- reactivate, in case it was previously deactivated --------
-    await tx.productColor.update({
-      where: { id: existing.id },
-      data: { isActive: true },
-    });
+    // -------- activation only changes when explicitly requested --------
+    if (color.isActive !== undefined) {
+      await tx.productColor.update({
+        where: { id: existing.id },
+        data: { isActive: color.isActive },
+      });
+    }
 
     // -------- images: no FK restrict from OrderItem, safe to replace --------
     await tx.productImage.deleteMany({
@@ -710,58 +766,26 @@ const upsertColors = async (
         continue;
       }
 
+      // Price (and activation, when sent) only. Stock is never written
+      // from this form: a value loaded before a sale would undo it.
       await tx.productVariant.update({
         where: { id: existingVariant.id },
         data: {
           price: variant.price,
-          stock: variant.stock,
-          isActive: true,
+          ...(variant.isActive !== undefined && {
+            isActive: variant.isActive,
+          }),
         },
       });
-
-      // ------------------------------------------------------------
-      // NOTE — this is a real gap I'm flagging, not fixing silently:
-      // Changing `stock` here bypasses your StockMovement audit log
-      // entirely. Every restock/adjustment you built earlier goes
-      // through stock-movement.service.ts and gets logged. This path
-      // — editing stock via the product edit form — does not, and
-      // currently CANNOT without deciding whether this form should
-      // even be allowed to touch stock at all.
-      //
-      // Pick one:
-      // (a) Remove `stock` from this form entirely; force all stock
-      //     changes through /admin/stock-movements (restock/adjust).
-      // (b) Keep it here, but log a StockMovement row when
-      //     variant.stock !== existingVariant.stock (uncomment below).
-      // Leaving it as-is silently means your audit trail has a second
-      // undocumented hole, exactly like the one this whole
-      // conversation started by closing.
-      // ------------------------------------------------------------
-
-      // if (variant.stock !== existingVariant.stock) {
-      //   await tx.stockMovement.create({
-      //     data: {
-      //       productVariantId: existingVariant.id,
-      //       type: StockMovementType.MANUAL_ADJUSTMENT,
-      //       change: variant.stock - existingVariant.stock,
-      //       previousStock: existingVariant.stock,
-      //       newStock: variant.stock,
-      //       reason: "Updated via product edit form",
-      //     },
-      //   });
-      // }
     }
 
-    if (toCreate.length > 0) {
-      await tx.productVariant.createMany({
-        data: toCreate.map((variant) => ({
-          productColorId: existing.id,
-          sizeId: variant.sizeId,
-          price: variant.price,
-          stock: variant.stock,
-        })),
-      });
-    }
+    await createVariants(
+      tx,
+      toCreate.map((variant) => ({
+        productColorId: existing.id,
+        variant,
+      })),
+    );
   }
 };
 
@@ -773,7 +797,7 @@ export const updateProduct = async (id: number, data: UpdateProductInput) => {
         include: {
           images: true,
           variants: {
-            select: { id: true, sizeId: true, stock: true },
+            select: { id: true, sizeId: true },
           },
         },
       },

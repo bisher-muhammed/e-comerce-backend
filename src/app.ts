@@ -21,10 +21,14 @@ import webhookRouter from "./routes/webhook.route";
 import staticsRouter from "./routes/admin/statistics.route";
 import stockMovementRouter from "./routes/admin/stock-flow.route";
 import offerRouters from "./routes/admin/offer.router";
+import refundRouters from "./routes/admin/refund.route";
+import returnRouters from "./routes/admin/return.route";
 import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
 import errorMiddleware from "./middlewares/error.middleware";
+import { requestId } from "./middlewares/request-id.middleware";
+import { auditAdminActions } from "./middlewares/audit.middleware";
 import { globalLimiter } from "./middlewares/rate-limit.middleware";
 import { resolveTrustProxy } from "./utils/trust-proxy.util";
 import {
@@ -42,6 +46,8 @@ const allowedOrigins = resolveAllowedOrigins(
 app.disable("x-powered-by");
 
 app.set("trust proxy", resolveTrustProxy(process.env.TRUST_PROXY));
+
+app.use(requestId);
 
 app.use(helmet());
 
@@ -69,6 +75,8 @@ app.use("/api/v1/health", healthRouter);
 
 app.use(globalLimiter);
 
+app.use(auditAdminActions);
+
 app.use("/api/v1/auth", authRouter);
 
 app.use("/api/v1/admin", adminRouter);
@@ -92,6 +100,8 @@ app.use("/api/v1/admin/stock-movements", stockMovementRouter);
 app.use("/api/v1/customer/coupons",couponRouter)
 app.use("/api/v1/admin/statistics",staticsRouter )
 app.use("/api/v1/admin/offers",offerRouters)
+app.use("/api/v1/admin/refunds", refundRouters);
+app.use("/api/v1/admin/returns", returnRouters);
 
 app.use(errorMiddleware)
 export default app;

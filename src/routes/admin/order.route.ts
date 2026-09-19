@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authenticateAdmin } from "../../middlewares/auth.middleware";
-import { authorize } from "../../middlewares/authorize.middleware";
+import { permitByMethod, requirePermission, requirePermissionWhen } from "../../middlewares/permission.middleware";
 import { validate } from "../../middlewares/validate.middleware";
 import * as orderController from "../../controllers/admin/order.controller";
 import {
@@ -12,7 +12,7 @@ import {
 
 const router = Router();
 
-router.use(authenticateAdmin, authorize("ADMIN", "SUPER_ADMIN"));
+router.use(authenticateAdmin, permitByMethod("orders.read", "orders.update"));
 
 router.get(
   "/",
@@ -30,6 +30,10 @@ router.patch(
   "/:orderId/status",
   validate({ params: orderIdParamSchema }),
   validate({ body: updateOrderStatusBodySchema }),
+  requirePermissionWhen(
+    (req) => req.body?.status === "CANCELLED",
+    "orders.cancel"
+  ),
   orderController.updateOrderStatus
 );
 
@@ -37,6 +41,7 @@ router.post(
   "/:orderId/refund",
   validate({ params: orderIdParamSchema }),
   validate({ body: refundOrderBodySchema }),
+  requirePermission("orders.refund"),
   orderController.refundOrder
 );
 

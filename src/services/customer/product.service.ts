@@ -26,11 +26,13 @@ const PRODUCT_INCLUDE = {
       },
 
       variants: {
+        where: { isActive: true },
         include: {
           size: true,
         },
       },
     },
+    where: { isActive: true },
   },
 } as const;
 
@@ -190,6 +192,7 @@ export const getProductBySlug = async (slug: string) => {
         where: {
           slug,
           isActive: true,
+          category: { isActive: true },
         },
 
         include: PRODUCT_INCLUDE,

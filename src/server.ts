@@ -1,4 +1,6 @@
-import "dotenv/config";
+// Must stay first: validates the configuration before anything uses it (M8).
+import "./config/check-env";
+
 import type { Server } from "node:http";
 
 import app from "./app";
@@ -8,6 +10,14 @@ import {
   startExpiredCheckoutSweeper,
   stopExpiredCheckoutSweeper,
 } from "./services/customer/checkout-cleanup.service";
+import {
+  startRefundWorker,
+  stopRefundWorker,
+} from "./services/refund.service";
+import {
+  startStockReconciliation,
+  stopStockReconciliation,
+} from "./services/admin/stock-movement.service";
 
 const PORT = process.env.PORT || 5000;
 
@@ -58,6 +68,10 @@ const shutdown = async (signal: string) => {
   try {
     stopExpiredCheckoutSweeper();
 
+    stopRefundWorker();
+
+    stopStockReconciliation();
+
     if (server) {
       await closeServer(server);
     }
@@ -83,6 +97,10 @@ const startServer = async () => {
     await connectRedis();
 
     startExpiredCheckoutSweeper();
+
+    startRefundWorker();
+
+    startStockReconciliation();
 
     server = app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);

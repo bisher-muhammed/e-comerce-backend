@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../middlewares/auth.middleware";
 import { validate } from "../../middlewares/validate.middleware";
+import { checkoutLimiter } from "../../middlewares/rate-limit.middleware";
 
 import {
     orderIdSchema,
@@ -19,6 +20,7 @@ import {
     cancelOrderItemController,
     returnOrderItemController,
     verifyPaymentController,
+    payOrderController,
 } from "../../controllers/customers/order.controller";
 
 const router = Router();
@@ -26,6 +28,15 @@ const router = Router();
 router.get("/", authenticate, validate({ query: listOrdersSchema }), getOrdersController);
 
 router.get("/:orderId", authenticate, validate({ params: orderIdSchema }), getOrderDetailsController);
+
+// Reopen payment for an unpaid online order (M10).
+router.post(
+    "/:orderId/pay",
+    authenticate,
+    checkoutLimiter,
+    validate({ params: orderIdSchema }),
+    payOrderController
+);
 
 router.patch(
     "/:orderId/cancel",

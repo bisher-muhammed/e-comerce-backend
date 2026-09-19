@@ -15,33 +15,14 @@ import { ListOrdersQuery } from "../../validations/admin/order.validation";
 import { calculateCancellationAmounts, sumGrossCancelled, } from "../../utils/order-amount.util";
 import { releaseCouponClaimForOrder } from "../../utils/coupon-redemption.util";
 import { cancelOrderItems } from "../../utils/order-cancellation.util";
-import { issueRefundAfterCancellation, issueRefundForOrder, RefundOutcome, } from "../refund.service";
+import { issueRefundAfterCancellation, issueRefundForOrder, RefundOutcome, REFUND_PUBLIC_SELECT, } from "../refund.service";
+import { RETURN_PUBLIC_SELECT } from "../return.service";
+import {
+    allowedNextStatuses,
+    transitionError,
+    type OrderStateInput,
+} from "../../utils/order-state.util";
 
-
-const ORDER_STATUS_TRANSITIONS: Record<
-    OrderStatus,
-    OrderStatus[]
-> = {
-    PENDING: [
-        OrderStatus.CONFIRMED,
-        OrderStatus.CANCELLED,
-    ],
-
-    CONFIRMED: [
-        OrderStatus.SHIPPED,
-        OrderStatus.DELIVERED,
-        OrderStatus.CANCELLED,
-    ],
-
-    SHIPPED: [
-        OrderStatus.DELIVERED,
-        OrderStatus.CANCELLED,
-    ],
-
-    DELIVERED: [],
-
-    CANCELLED: [],
-};
 
 const ADMIN_CANCELLABLE_STATUSES: OrderStatus[] = [
     OrderStatus.PENDING,
@@ -54,14 +35,20 @@ const ADMIN_CANCELLABLE_STATUSES: OrderStatus[] = [
 // ============================================================
 
 export const getValidNextStatuses = (
-    current: OrderStatus
-): OrderStatus[] => {
-    return ORDER_STATUS_TRANSITIONS[current];
-};
+    order: OrderStateInput
+): OrderStatus[] => allowedNextStatuses(order);
 
 // ============================================================
 // IDEMPOTENCY ERROR
 // ============================================================
+
+const isUnpaidOnlineBlock = (
+    order: OrderStateInput,
+    next: OrderStatus
+) =>
+    order.paymentMethod === "ONLINE" &&
+    order.paymentStatus !== "PAID" &&
+    next !== OrderStatus.CANCELLED;
 
 function isIdempotencyConflict(err: unknown): boolean {
     return isUniqueConstraintOn(
@@ -346,7 +333,7 @@ export const listOrders = async (
             ...order,
 
             nextStatuses:
-                getValidNextStatuses(order.status),
+                getValidNextStatuses(order),
         })),
 
         pagination: {
@@ -439,6 +426,20 @@ export const getOrderDetails = async (
                     },
                 },
             },
+
+            refunds: {
+                select: REFUND_PUBLIC_SELECT,
+                orderBy: {
+                    createdAt: "desc",
+                },
+            },
+
+            returns: {
+                select: RETURN_PUBLIC_SELECT,
+                orderBy: {
+                    createdAt: "desc",
+                },
+            },
         },
     });
 
@@ -453,7 +454,7 @@ export const getOrderDetails = async (
         ...order,
 
         nextStatuses:
-            getValidNextStatuses(order.status),
+            getValidNextStatuses(order),
     };
 };
 
@@ -529,25 +530,26 @@ export const updateOrderStatus = async (
                     );
                 }
 
-                const allowed =
-                    getValidNextStatuses(
-                        order.status
-                    );
+                const message = transitionError(
+                    order,
+                    nextStatus
+                );
 
-                if (!allowed.includes(nextStatus)) {
-                    const message =
-                        allowed.length === 0
-                            ? `Order is already in a terminal state (${order.status}) and cannot be changed`
-                            : `Cannot move order from ${order.status} to ${nextStatus}. Allowed next statuses: ${allowed.join(", ")}`;
-
+                if (message) {
                     throw new AppError(
                         message,
-                        400
+                        isUnpaidOnlineBlock(order, nextStatus)
+                            ? 409
+                            : 400
                     );
                 }
 
                 const data: Prisma.OrderUpdateInput = {
                     status: nextStatus,
+
+                    ...(nextStatus === OrderStatus.DELIVERED && {
+                        deliveredAt: new Date(),
+                    }),
                 };
 
                 // ------------------------------------------------
@@ -568,12 +570,16 @@ export const updateOrderStatus = async (
                 // Atomic status guard
                 // ------------------------------------------------
 
+                // Status AND payment state must be unchanged, so a payment
+                // or cancellation landing concurrently wins.
                 const updated =
                     await tx.order.updateMany({
                         where: {
                             id: orderId,
 
                             status: order.status,
+
+                            paymentStatus: order.paymentStatus,
                         },
 
                         data,
@@ -845,34 +851,40 @@ export const updateOrderStatus = async (
                 currentOrder?.status ===
                 OrderStatus.CANCELLED
             ) {
-                await issueRefundAfterCancellation(
+                const refund = await issueRefundAfterCancellation(
                     orderId,
                     idempotencyKey,
                     cleanReason
                 );
 
-                return prisma.order.findUniqueOrThrow({
-                    where: {
-                        id: orderId,
-                    },
-                });
+                return {
+                    ...(await prisma.order.findUniqueOrThrow({
+                        where: {
+                            id: orderId,
+                        },
+                    })),
+                    refund,
+                };
             }
         }
 
         throw err;
     }
 
-    await issueRefundAfterCancellation(
+    const refund = await issueRefundAfterCancellation(
         orderId,
         idempotencyKey,
         cleanReason
     );
 
-    return prisma.order.findUniqueOrThrow({
-        where: {
-            id: orderId,
-        },
-    });
+    return {
+        ...(await prisma.order.findUniqueOrThrow({
+            where: {
+                id: orderId,
+            },
+        })),
+        refund,
+    };
 };
 
 export const refundOrder = async (

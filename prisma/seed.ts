@@ -4,7 +4,7 @@ import argon2 from "argon2";
 import prisma from "../src/config/prisma";
 
 const createSuperAdmin = async () => {
-  const email = process.env.SUPER_ADMIN_EMAIL;
+  const email = process.env.SUPER_ADMIN_EMAIL?.trim().toLowerCase();
   const password = process.env.SUPER_ADMIN_PASSWORD;
 
   if (!email || !password) {

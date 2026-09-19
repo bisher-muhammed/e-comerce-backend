@@ -1,4 +1,5 @@
 import { Prisma } from "../../generated/prisma/client";
+import AppError from "../errors/AppError";
 
 
 /**
@@ -9,9 +10,13 @@ import { Prisma } from "../../generated/prisma/client";
  * be retried by the application. If you don't retry this, users get a
  * raw 500 on checkout for no reason other than bad luck in timing.
  */
+/*
+ * P2028 (could not start a transaction in time) is deliberately NOT
+ * retried: it means the pool is saturated, and retrying only adds load
+ * (M14). It surfaces as a 503 with Retry-After instead.
+ */
 const RETRYABLE_CODES = new Set([
   "P2034",
-  "P2028",
   "P1017",
 ]);
 
@@ -47,6 +52,36 @@ export function isSerializationFailure(
   );
 }
 
+/**
+ * A write conflict can reach us either wrapped (P2034) or, from inside an
+ * interactive transaction, as the adapter's raw DriverAdapterError whose
+ * cause.kind is "TransactionWriteConflict" — both must be retried.
+ */
+export function isRetryableTransactionError(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return (
+      RETRYABLE_CODES.has(error.code) || isSerializationFailure(error)
+    );
+  }
+
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+
+  const cause = (error as { cause?: { kind?: unknown; originalCode?: unknown } })
+    .cause;
+
+  return (
+    (error as { name?: unknown }).name === "DriverAdapterError" &&
+    (cause?.kind === "TransactionWriteConflict" ||
+      (typeof cause?.originalCode === "string" &&
+        RETRYABLE_POSTGRES_CODES.has(cause.originalCode)))
+  );
+}
+
+export const CONTENTION_MESSAGE =
+  "Lots of people are doing this at the same moment. Please try again.";
+
 export async function withTransactionRetry<T>(
   fn: () => Promise<T>,
   options: { maxRetries?: number; baseDelayMs?: number } = {}
@@ -61,17 +96,13 @@ export async function withTransactionRetry<T>(
     } catch (error) {
       attempt++;
 
-      const prismaError =
-        error instanceof Prisma.PrismaClientKnownRequestError
-          ? (error as Prisma.PrismaClientKnownRequestError & { code: string })
-          : undefined;
-      const isRetryable =
-        prismaError != null &&
-        (RETRYABLE_CODES.has(prismaError.code) ||
-          isSerializationFailure(prismaError));
-
-      if (!isRetryable || attempt > maxRetries) {
+      if (!isRetryableTransactionError(error)) {
         throw error;
+      }
+
+      // Out of retries under contention: a clean "try again", not a 500.
+      if (attempt > maxRetries) {
+        throw new AppError(CONTENTION_MESSAGE, 409, "RETRY_LATER");
       }
 
       const jitter = Math.random() * baseDelayMs;

@@ -2,7 +2,7 @@ import { Router } from "express";
 
 import { authenticateAdmin } from "../../middlewares/auth.middleware";
 
-import { authorize } from "../../middlewares/authorize.middleware";
+import { requirePermission } from "../../middlewares/permission.middleware";
 
 import { validate } from "../../middlewares/validate.middleware";
 
@@ -27,7 +27,7 @@ const router = Router();
 router.get(
   "/overview",
   authenticateAdmin,
-  authorize("ADMIN", "SUPER_ADMIN"),
+  requirePermission("stats.view"),
   validate({
     query: statisticsDateRangeSchema,
   }),
@@ -37,7 +37,7 @@ router.get(
 router.get(
   "/revenue",
   authenticateAdmin,
-  authorize("ADMIN", "SUPER_ADMIN"),
+  requirePermission("stats.view"),
   validate({
     query: revenueStatisticsSchema,
   }),
@@ -47,7 +47,7 @@ router.get(
 router.get(
   "/orders",
   authenticateAdmin,
-  authorize("ADMIN", "SUPER_ADMIN"),
+  requirePermission("stats.view"),
   validate({
     query: orderStatisticsSchema,
   }),
@@ -57,7 +57,7 @@ router.get(
 router.get(
   "/revenue-by-category",
   authenticateAdmin,
-  authorize("ADMIN", "SUPER_ADMIN"),
+  requirePermission("stats.view"),
   validate({
     query: statisticsDateRangeSchema,
   }),
@@ -67,7 +67,7 @@ router.get(
 router.get(
   "/top-products",
   authenticateAdmin,
-  authorize("ADMIN", "SUPER_ADMIN"),
+  requirePermission("stats.view"),
   validate({
     query: topProductsStatisticsSchema,
   }),
@@ -77,7 +77,7 @@ router.get(
 router.get(
   "/order-status",
   authenticateAdmin,
-  authorize("ADMIN", "SUPER_ADMIN"),
+  requirePermission("stats.view"),
   validate({
     query: statisticsDateRangeSchema,
   }),

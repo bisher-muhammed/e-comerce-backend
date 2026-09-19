@@ -1,7 +1,7 @@
 import { Router } from "express";
 
 import { authenticateAdmin } from "../middlewares/auth.middleware";
-import { authorize } from "../middlewares/authorize.middleware";
+import { permitByMethod } from "../middlewares/permission.middleware";
 import { validate } from "../middlewares/validate.middleware";
 
 import {
@@ -27,7 +27,7 @@ const router = Router();
 
 
 router.use(authenticateAdmin);
-router.use(authorize("SUPER_ADMIN", "ADMIN"));
+router.use(permitByMethod("catalog.read", "catalog.write"));
 
 
 router.post(

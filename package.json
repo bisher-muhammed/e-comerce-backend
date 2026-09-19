@@ -8,6 +8,7 @@
     "start": "node dist/src/server.js",
     "typecheck": "tsc --noEmit",
     "check:logs": "grep -rn --include='*.ts' 'console\\.' src/services/auth src/services/email.service.ts src/middlewares/error.middleware.ts src/config/redis.ts && exit 1 || exit 0",
+    "check:migrations": "tsx scripts/check-migrations.ts",
     "seed": "tsx prisma/seed.ts"
   },
   "keywords": [],

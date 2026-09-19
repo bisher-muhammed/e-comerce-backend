@@ -406,6 +406,7 @@ export const update = async (
 
       colors: data.colors?.map((color) => ({
         colorId: color.colorId,
+        isActive: color.isActive,
         variants: color.variants,
 
         images: color.images.map((image) => {

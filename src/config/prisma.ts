@@ -30,6 +30,16 @@ const adapter = new PrismaPg({
     process.env.DATABASE_POOL_CONNECTION_TIMEOUT_MS,
     10_000
   ),
+
+  statement_timeout: parsePositiveInt(
+    process.env.DATABASE_STATEMENT_TIMEOUT_MS,
+    15_000
+  ),
+
+  idle_in_transaction_session_timeout: parsePositiveInt(
+    process.env.DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS,
+    20_000
+  ),
 });
 
 const prisma = new PrismaClient({

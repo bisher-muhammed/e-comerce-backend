@@ -18,6 +18,8 @@ export interface AuthenticatedUser {
     | "ACTIVE"
     | "SUSPENDED"
     | "DEACTIVATED";
+  mfaEnabled: boolean;
+  permissions: string[];
 }
 
 const authUserKey = (userId: number) =>
@@ -35,7 +37,7 @@ export const loadAuthenticatedUser = async (
     return hit;
   }
 
-  const user = await prisma.user.findUnique({
+  const row = await prisma.user.findUnique({
     where: {
       id: userId,
     },
@@ -46,12 +48,21 @@ export const loadAuthenticatedUser = async (
       lastName: true,
       role: true,
       status: true,
+      permissions: true,
+      credential: { select: { totpEnabledAt: true } },
     },
   });
 
-  if (!user) {
+  if (!row) {
     return null;
   }
+
+  const { credential, ...rest } = row;
+
+  const user: AuthenticatedUser = {
+    ...rest,
+    mfaEnabled: Boolean(credential?.totpEnabledAt),
+  };
 
   await cacheWriteRaw(
     key,

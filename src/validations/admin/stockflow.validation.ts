@@ -6,8 +6,15 @@ export const variantIdParamSchema = z.object({
 });
 export type VariantIdParam = z.infer<typeof variantIdParamSchema>;
 
+const idempotencyKey = z.string().trim().min(1).max(100).optional();
+
 export const restockSchema = z.object({
-  quantity: z.number().int().positive("Quantity must be a positive integer"),
+  quantity: z
+    .number()
+    .int()
+    .positive("Quantity must be a positive integer")
+    .max(100_000, "Restock quantity is too large"),
+  idempotencyKey,
   supplierName: z.string().trim().min(1).max(200).optional(),
   unitCost: z.number().positive().optional(),
   batchNumber: z.string().trim().max(100).optional(),
@@ -15,7 +22,14 @@ export const restockSchema = z.object({
 export type RestockBody = z.infer<typeof restockSchema>;
 
 export const manualAdjustmentSchema = z.object({
-  newStock: z.number().int().nonnegative("Stock cannot be negative"),
+  newStock: z
+    .number()
+    .int()
+    .nonnegative("Stock cannot be negative")
+    .max(1_000_000, "Stock is too high"),
+  // The stock the admin was looking at; refuses the change if it moved.
+  expectedStock: z.number().int().nonnegative().max(1_000_000).optional(),
+  idempotencyKey,
   reason: z.string().trim().min(5, "Reason must be at least 5 characters"),
 });
 export type ManualAdjustmentBody = z.infer<typeof manualAdjustmentSchema>;

@@ -87,6 +87,34 @@ const sendTemplateEmail = async (
 // MESSAGES
 // ------------------------------------------------------------
 
+/**
+ * Password-reset link. The template is optional configuration
+ * (RESEND_TEMPLATE_PASSWORD_RESET, variables RESET_URL and
+ * EXPIRY_MINUTES); without it the request is logged and dropped.
+ */
+export const sendPasswordResetEmail = async (
+  email: string,
+  resetUrl: string,
+  expiryMinutes: number
+): Promise<string | null> => {
+  const template = process.env.RESEND_TEMPLATE_PASSWORD_RESET?.trim();
+
+  if (!template) {
+    logError(
+      "email.template_missing",
+      new Error("RESEND_TEMPLATE_PASSWORD_RESET is not configured"),
+      { alert: true }
+    );
+
+    return null;
+  }
+
+  return sendTemplateEmail(template, email, {
+    RESET_URL: resetUrl,
+    EXPIRY_MINUTES: expiryMinutes,
+  });
+};
+
 export const sendOtpEmail = async (
   email: string,
   otp: string,

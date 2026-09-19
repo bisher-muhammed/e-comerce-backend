@@ -1,6 +1,6 @@
 // controllers/customers/cart.controller.ts
 
-import { Request, Response } from "express";
+import { NextFunction, Request, Response } from "express";
 import {
   addToCart,
   getCart,
@@ -15,29 +15,23 @@ import type {
   CartItemParams,
 } from "../../validations/customer/cart.validation";
 
-const handleError = (res: Response, error: unknown) => {
-  if (error instanceof AppError) {
-    return res.status(error.statusCode).json({
-      success: false,
-      message: error.message,
-    });
+const requireUser = (req: Request) => {
+  if (!req.user) {
+    throw new AppError("Unauthorized", 401);
   }
 
-  console.error(error);
-  return res.status(500).json({
-    success: false,
-    message: "Something went wrong",
-  });
+  return req.user;
 };
 
-export const addToCartController = async (req: Request, res: Response) => {
+export const addToCartController = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    }
-
+    const user = requireUser(req);
     const { productVariantId, quantity } = validated<AddToCartInput>(req, "body");
-    const cartItem = await addToCart(req.user.id, productVariantId, quantity);
+    const cartItem = await addToCart(user.id, productVariantId, quantity);
 
     return res.status(200).json({
       success: true,
@@ -45,37 +39,38 @@ export const addToCartController = async (req: Request, res: Response) => {
       data: cartItem,
     });
   } catch (error) {
-    return handleError(res, error);
+    next(error);
   }
 };
 
-export const getCartController = async (req: Request, res: Response) => {
+export const getCartController = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    }
-
-    const cart = await getCart(req.user.id);
+    const cart = await getCart(requireUser(req).id);
 
     return res.status(200).json({
       success: true,
       data: cart,
     });
   } catch (error) {
-    return handleError(res, error);
+    next(error);
   }
 };
 
-export const updateCartItemController = async (req: Request, res: Response) => {
+export const updateCartItemController = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    }
-
+    const user = requireUser(req);
     const { cartItemId } = validated<CartItemParams>(req, "params");
     const { quantity } = validated<UpdateCartItemInput>(req, "body");
 
-    const cartItem = await updateCartItem(req.user.id, cartItemId, quantity);
+    const cartItem = await updateCartItem(user.id, cartItemId, quantity);
 
     return res.status(200).json({
       success: true,
@@ -83,24 +78,25 @@ export const updateCartItemController = async (req: Request, res: Response) => {
       data: cartItem,
     });
   } catch (error) {
-    return handleError(res, error);
+    next(error);
   }
 };
 
-export const removeCartItemController = async (req: Request, res: Response) => {
+export const removeCartItemController = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    }
-
+    const user = requireUser(req);
     const { cartItemId } = validated<CartItemParams>(req, "params");
-    await removeCartItem(req.user.id, cartItemId);
+    await removeCartItem(user.id, cartItemId);
 
     return res.status(200).json({
       success: true,
       message: "Cart item removed",
     });
   } catch (error) {
-    return handleError(res, error);
+    next(error);
   }
 };

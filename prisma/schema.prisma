@@ -29,6 +29,9 @@ model User {
   role      UserRole   @default(CUSTOMER)
   status    UserStatus @default(PENDING_VERIFICATION)
 
+  // Admin permissions (M9); SUPER_ADMIN implicitly holds all of them.
+  permissions String[] @default([])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -38,6 +41,7 @@ model User {
   addresses    Address[]
   orders       Order[]
   couponClaims CouponClaim[]
+  auditLogs    AuditLog[]
 
   @@index([email(ops: raw("gin_trgm_ops"))], type: Gin)
 }
@@ -45,6 +49,11 @@ model User {
 model UserCredential {
   userId       Int    @id
   passwordHash String
+
+  // TOTP second factor (M4). The secret is AES-256-GCM encrypted with
+  // MFA_ENCRYPTION_KEY; it is never stored or returned in clear.
+  totpSecret    String?
+  totpEnabledAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -208,7 +217,7 @@ model CartItem {
 
   productVariantId Int
 
-  productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
 
   quantity Int @default(1)
 
@@ -242,7 +251,7 @@ model WishlistItem {
   productId  Int
 
   wishlist Wishlist @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
-  product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -314,6 +323,8 @@ model Order {
   total    Decimal @db.Decimal(10, 2)
 
   cancelledAmount Decimal @default(0) @db.Decimal(10, 2)
+  // Net value (after coupon allocation) of units returned and received.
+  returnedAmount  Decimal @default(0) @db.Decimal(10, 2)
   refundedAmount  Decimal @default(0) @db.Decimal(10, 2)
 
   couponCode     String?
@@ -323,9 +334,13 @@ model Order {
 
   expiresAt DateTime?
 
+  // Start of the return window.
+  deliveredAt DateTime?
+
   items       OrderItem[]
   couponClaim CouponClaim?
   refunds     Refund[]
+  returns     ReturnRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -354,12 +369,20 @@ model Refund {
   reason            String?
   failureReason     String?
   idempotencyKey    String
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+
+  // True when the refunded payment is not the order's own payment — a
+  // capture that arrived after the order stopped accepting payment, or a
+  // duplicate payment. Those are owed in full and are not tracked in
+  // Order.refundedAmount.
+  orphanPayment Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([orderId, idempotencyKey])
   @@index([orderId])
-  @@index([status])
+  @@index([status, updatedAt])
+  @@index([razorpayPaymentId])
 }
 
 model OrderItem {
@@ -382,6 +405,7 @@ model OrderItem {
   returnedQuantity  Int @default(0)
 
   actions OrderItemAction[]
+  returns ReturnRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -407,6 +431,79 @@ model OrderItemAction {
 
   @@unique([orderItemId, idempotencyKey])
   @@index([orderItemId])
+}
+
+/// One row per successful admin mutation (and customer-data view) — M9.
+model AuditLog {
+  id Int @id @default(autoincrement())
+
+  actorId    Int?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorEmail String
+  actorRole  UserRole
+
+  /// "<METHOD> <route template>", e.g. "PATCH /api/v1/admin/orders/:orderId/status"
+  action     String
+  entityType String?
+  entityId   String?
+  statusCode Int
+
+  /// Params, query and body with secrets redacted.
+  requestData Json?
+
+  ip        String?
+  userAgent String?
+  requestId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  RECEIVED
+  REFUNDED
+}
+
+/// One customer return of some units of an order item (audit H4).
+/// Units under an open request are neither remaining nor returned:
+/// quantity = remaining + cancelled + returned + Σ open request quantity.
+model ReturnRequest {
+  id Int @id @default(autoincrement())
+
+  orderId     Int
+  order       Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId Int
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  quantity Int
+  reason   String
+  status   ReturnStatus @default(REQUESTED)
+
+  idempotencyKey String
+
+  adminNote String?
+
+  /// Net amount credited to the order when the goods were received.
+  refundAmount          Decimal? @db.Decimal(10, 2)
+  /// Reference for money returned outside Razorpay (COD orders).
+  manualRefundReference String?
+
+  decidedAt  DateTime?
+  receivedAt DateTime?
+  refundedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([orderItemId, idempotencyKey])
+  @@index([orderId])
+  @@index([status, createdAt])
 }
 
 enum CouponDiscountType {
@@ -491,7 +588,9 @@ model StockMovement {
   id Int @id @default(autoincrement())
 
   productVariantId Int
-  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  // Restrict: the ledger is append-only history; a variant with movements
+  // is deactivated rather than deleted (M11).
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
 
   type          StockMovementType
   change        Int
@@ -501,6 +600,9 @@ model StockMovement {
   orderItemId Int?
   reason      String?
 
+  // Admin restock/adjust replays with the same key return the original row.
+  idempotencyKey String?
+
   // Only add these if/when you actually need them:
   supplierName String?
   unitCost     Decimal? @db.Decimal(10, 2)
@@ -508,8 +610,10 @@ model StockMovement {
 
   createdAt DateTime @default(now())
 
+  @@unique([productVariantId, idempotencyKey])
   @@index([productVariantId, createdAt])
   @@index([type])
+  @@index([orderItemId])
 }
 
 enum AddressLabel {
@@ -549,6 +653,7 @@ enum OfferType {
 
 
 enum StockMovementType {
+  INITIAL_STOCK
   ORDER_PLACED
   ORDER_CANCELLED
   ORDER_RETURNED

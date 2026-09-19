@@ -33,6 +33,13 @@ export const checkoutSchema = z.object({
 
   couponCode: couponCodeSchema.optional(),
 
+  // The total the customer was shown. A new order is refused if the
+  // server's total differs (offers or prices changed meanwhile).
+  expectedTotal: z
+    .string()
+    .regex(/^\d{1,10}(\.\d{1,2})?$/, "Invalid expected total")
+    .optional(),
+
   idempotencyKey: z
     .string()
     .uuid("idempotencyKey must be a valid UUID"),
