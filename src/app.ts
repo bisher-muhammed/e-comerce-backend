@@ -19,6 +19,7 @@ import couponRouters from "./routes/admin/coupon.route";
 import couponRouter from "./routes/customer/coupon.route";
 import webhookRouter from "./routes/webhook.route";
 import staticsRouter from "./routes/admin/statistics.route";
+import offerRouters from "./routes/admin/offer.router";
 import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
@@ -86,6 +87,7 @@ app.use("/api/v1/admin/orders",ordersRouters);
 app.use("/api/v1/admin/coupons",couponRouters);
 app.use("/api/v1/customer/coupons",couponRouter)
 app.use("/api/v1/admin/statistics",staticsRouter )
+app.use("/api/v1/admin/offers",offerRouters)
 
 app.use(errorMiddleware)
 export default app;
