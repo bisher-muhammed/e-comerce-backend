@@ -476,13 +476,17 @@ export const remove = async (
   try {
     const id = parseProductId(req);
 
-    await deleteProduct(id);
+    const { deactivated } = await deleteProduct(id);
 
     return res.status(200).json({
       success: true,
-      message: "Product deleted successfully",
+      message: deactivated
+        ? "Product has order history and was deactivated instead of deleted"
+        : "Product deleted successfully",
+      deactivated,
     });
   } catch (error) {
     next(error);
   }
 };
+
