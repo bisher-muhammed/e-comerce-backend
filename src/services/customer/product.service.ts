@@ -3,6 +3,7 @@ import prisma from "../../config/prisma";
 import { Prisma } from "../../../generated/prisma/client";
 
 import { ListProductsQuery } from "../../validations/customer/product.validation";
+import { withEffectivePricing } from "../../services/customer/offer-pricing.service";
 
 import {
   CATALOG_NAMESPACE,
@@ -38,6 +39,7 @@ interface StockCarrier {
     variants: Array<{
       id: number;
       stock: number;
+      price?: Prisma.Decimal | string | number;
     }>;
   }>;
 }
@@ -163,7 +165,7 @@ export const getProducts = async (
   );
 
   return {
-    products: await withLiveStock(products),
+  products: await withEffectivePricing(await withLiveStock(products)),
 
     pagination: {
       page,
@@ -203,9 +205,8 @@ export const getProductBySlug = async (slug: string) => {
     return null;
   }
 
-  const [withStock] = await withLiveStock([
-    product,
-  ]);
+  const [withStock] = await withLiveStock([product]);
+const [withPricing] = await withEffectivePricing([withStock]);
 
-  return withStock;
+return withPricing;
 };

@@ -3,6 +3,7 @@ import crypto from "crypto";
 import prisma from "../../config/prisma";
 import razorpay from "../../config/razorpay";
 import type { Payments } from "razorpay/dist/types/payments";
+import { getEffectivePricesForVariants } from "./offer-pricing.service";
 
 import AppError from "../../errors/AppError";
 
@@ -294,17 +295,16 @@ async function getCartForCheckout(
   tx: TransactionClient,
   cartId: number
 ) {
-  const cart =
-    await tx.cart.findUniqueOrThrow({
-      where: {
-        id: cartId,
+  const cart = await tx.cart.findUniqueOrThrow({
+    where: {
+      id: cartId,
+    },
+    include: {
+      items: {
+        include: CART_ITEM_INCLUDE,
       },
-      include: {
-        items: {
-          include: CART_ITEM_INCLUDE,
-        },
-      },
-    });
+    },
+  });
 
   /*
    * Deterministic ordering prevents a class
@@ -317,8 +317,31 @@ async function getCartForCheckout(
       b.productVariantId
   );
 
-  return cart;
+  /*
+   * Calculate the current effective price
+   * for every variant in the cart.
+   */
+  const variantInputs = cart.items.map((item) => ({
+    id: item.productVariantId,
+    price: item.productVariant.price,
+    productId:
+      item.productVariant.productColor.product.id,
+    categoryId:
+      item.productVariant.productColor.product.categoryId,
+  }));
+
+  const effectivePrices =
+    await getEffectivePricesForVariants(
+      variantInputs
+    );
+
+  return {
+    ...cart,
+    effectivePrices,
+  };
 }
+
+
 
 function buildOrderItemsData(
   items: Array<{
@@ -338,36 +361,52 @@ function buildOrderItemsData(
         };
       };
     };
-  }>
+  }>,
+  effectivePrices: Map<
+    number,
+    {
+      originalPrice: number;
+      finalPrice: number;
+      discountPercentage: number | null;
+      offerSource: "PRODUCT" | "CATEGORY" | null;
+    }
+  >
 ) {
-  return items.map((item) => ({
-    productVariantId:
-      item.productVariantId,
+  return items.map((item) => {
+    const pricing = effectivePrices.get(
+      item.productVariantId
+    );
 
-    productName:
-      item.productVariant.productColor
-        .product.name,
+    if (!pricing) {
+      throw new AppError(
+        "Unable to calculate product price",
+        500
+      );
+    }
 
-    colorName:
-      item.productVariant.productColor
-        .color.name,
+    return {
+      productVariantId: item.productVariantId,
 
-    sizeName:
-      item.productVariant.size.name,
+      productName:
+        item.productVariant.productColor.product.name,
 
-    price:
-      item.productVariant.price,
+      colorName:
+        item.productVariant.productColor.color.name,
 
-    quantity: item.quantity,
+      sizeName:
+        item.productVariant.size.name,
 
-    remainingQuantity:
-      item.quantity,
+      // Store the actual effective price paid for this order.
+      price: new Prisma.Decimal(pricing.finalPrice),
 
-    cancelledQuantity: 0,
-
-    returnedQuantity: 0,
-  }));
+      quantity: item.quantity,
+      remainingQuantity: item.quantity,
+      cancelledQuantity: 0,
+      returnedQuantity: 0,
+    };
+  });
 }
+
 
 function toStockMovements(
   items: Array<{
@@ -397,21 +436,41 @@ function toStockMovements(
 function calculateSubtotal(
   items: Array<{
     quantity: number;
-    productVariant: {
-      price: Prisma.Decimal;
-    };
-  }>
+    productVariantId: number;
+  }>,
+  effectivePrices: Map<
+    number,
+    {
+      originalPrice: number;
+      finalPrice: number;
+      discountPercentage: number | null;
+      offerSource:
+        | "PRODUCT"
+        | "CATEGORY"
+        | null;
+    }
+  >
 ): Prisma.Decimal {
   return items
-    .reduce(
-      (sum, item) =>
-        sum.add(
-          item.productVariant.price.mul(
-            item.quantity
-          )
-        ),
-      ZERO
-    )
+    .reduce((sum, item) => {
+      const pricing =
+        effectivePrices.get(
+          item.productVariantId
+        );
+
+      if (!pricing) {
+        throw new AppError(
+          "Unable to calculate product price",
+          500
+        );
+      }
+
+      return sum.add(
+        new Prisma.Decimal(
+          pricing.finalPrice
+        ).mul(item.quantity)
+      );
+    }, ZERO)
     .toDecimalPlaces(2);
 }
 
@@ -636,7 +695,10 @@ async function runCodCheckout(
 
 
   const subtotal =
-    calculateSubtotal(cart.items);
+  calculateSubtotal(
+    cart.items,
+    cart.effectivePrices
+  );
 
 
   const coupon =
@@ -693,7 +755,8 @@ async function runCodCheckout(
         items: {
           create:
             buildOrderItemsData(
-              cart.items
+              cart.items,
+              cart.effectivePrices
             ),
         },
       },
@@ -801,7 +864,10 @@ async function runOnlinePendingOrderCreation(
 
 
   const subtotal =
-    calculateSubtotal(cart.items);
+  calculateSubtotal(
+    cart.items,
+    cart.effectivePrices
+  );
 
 
   const coupon =
@@ -866,7 +932,8 @@ async function runOnlinePendingOrderCreation(
         items: {
           create:
             buildOrderItemsData(
-              cart.items
+              cart.items,
+              cart.effectivePrices
             ),
         },
       },
