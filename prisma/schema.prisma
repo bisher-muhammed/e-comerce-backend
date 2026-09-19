@@ -120,8 +120,9 @@ model Size {
 model ProductColor {
   id Int @id @default(autoincrement())
 
-  productId Int
-  colorId   Int
+productId Int
+colorId Int
+isActive Boolean @default(true)
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   color   Color   @relation(fields: [colorId], references: [id], onDelete: Restrict)
@@ -140,8 +141,10 @@ model ProductColor {
 model ProductVariant {
   id Int @id @default(autoincrement())
 
-  productColorId Int
-  sizeId         Int
+productColorId Int
+sizeId Int
+isActive Boolean @default(true)
+
 
   productColor ProductColor @relation(fields: [productColorId], references: [id], onDelete: Cascade)
   size         Size         @relation(fields: [sizeId], references: [id], onDelete: Restrict)
@@ -149,8 +152,11 @@ model ProductVariant {
   price Decimal @db.Decimal(10, 2)
   stock Int     @default(0)
 
-  cartItems  CartItem[]
-  orderItems OrderItem[]
+
+cartItems CartItem[]
+orderItems OrderItem[]
+stockMovements StockMovement[]
+
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -480,6 +486,32 @@ model Offer {
   @@index([isActive, startsOn, expiresOn])
 }
 
+
+model StockMovement {
+  id Int @id @default(autoincrement())
+
+  productVariantId Int
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+
+  type          StockMovementType
+  change        Int
+  previousStock Int
+  newStock      Int
+
+  orderItemId Int?
+  reason      String?
+
+  // Only add these if/when you actually need them:
+  supplierName String?
+  unitCost     Decimal? @db.Decimal(10, 2)
+  batchNumber  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([productVariantId, createdAt])
+  @@index([type])
+}
+
 enum AddressLabel {
   HOME
   OFFICE
@@ -513,4 +545,13 @@ enum OrderItemActionType {
 enum OfferType {
   PRODUCT
   CATEGORY
+}
+
+
+enum StockMovementType {
+  ORDER_PLACED
+  ORDER_CANCELLED
+  ORDER_RETURNED
+  MANUAL_ADJUSTMENT
+  RESTOCK
 }
